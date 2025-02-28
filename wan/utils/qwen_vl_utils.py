@@ -274,6 +274,12 @@ def get_video_reader_backend() -> str:
 def fetch_video(
         ele: dict,
         image_factor: int = IMAGE_FACTOR) -> torch.Tensor | list[Image.Image]:
+    # Handle MPS device compatibility
+    original_device = None
+    if isinstance(ele.get("video"), torch.Tensor) and ele["video"].device.type == "mps":
+        original_device = ele["video"].device
+        ele["video"] = ele["video"].cpu()
+        
     if isinstance(ele["video"], str):
         video_reader_backend = get_video_reader_backend()
         video = VIDEO_READER_BACKENDS[video_reader_backend](ele)
@@ -323,6 +329,10 @@ def fetch_video(
         if len(images) < nframes:
             images.extend([images[-1]] * (nframes - len(images)))
         return images
+
+    # Return to original device if needed
+    if original_device is not None and isinstance(video, torch.Tensor):
+        video = video.to(original_device)
 
 
 def extract_vision_info(

@@ -186,6 +186,11 @@ def _parse_args():
         type=float,
         default=5.0,
         help="Classifier free guidance scale.")
+    parser.add_argument(
+        "--device",
+        type=str,
+        default=None,
+        help="Device to use for computation (mps, cpu).")
 
     args = parser.parse_args()
 
@@ -207,43 +212,21 @@ def _init_logging(rank):
 
 
 def generate(args):
-    rank = int(os.getenv("RANK", 0))
-    world_size = int(os.getenv("WORLD_SIZE", 1))
-    local_rank = int(os.getenv("LOCAL_RANK", 0))
-    device = local_rank
-    _init_logging(rank)
-
+    # Set device based on args or availability
+    if args.device:
+        device = torch.device(args.device)
+    else:
+        device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
+    
+    _init_logging(0)  # Use rank 0 logging for single-device
+    
+    # Ensure all torch operations use this device
+    torch.set_default_device(device)
+    
     if args.offload_model is None:
-        args.offload_model = False if world_size > 1 else True
+        args.offload_model = True  # Default to True for single device to save memory
         logging.info(
             f"offload_model is not specified, set to {args.offload_model}.")
-    if world_size > 1:
-        torch.cuda.set_device(local_rank)
-        dist.init_process_group(
-            backend="nccl",
-            init_method="env://",
-            rank=rank,
-            world_size=world_size)
-    else:
-        assert not (
-            args.t5_fsdp or args.dit_fsdp
-        ), f"t5_fsdp and dit_fsdp are not supported in non-distributed environments."
-        assert not (
-            args.ulysses_size > 1 or args.ring_size > 1
-        ), f"context parallel are not supported in non-distributed environments."
-
-    if args.ulysses_size > 1 or args.ring_size > 1:
-        assert args.ulysses_size * args.ring_size == world_size, f"The number of ulysses_size and ring_size should be equal to the world size."
-        from xfuser.core.distributed import (initialize_model_parallel,
-                                             init_distributed_environment)
-        init_distributed_environment(
-            rank=dist.get_rank(), world_size=dist.get_world_size())
-
-        initialize_model_parallel(
-            sequence_parallel_degree=dist.get_world_size(),
-            ring_degree=args.ring_size,
-            ulysses_degree=args.ulysses_size,
-        )
 
     if args.use_prompt_extend:
         if args.prompt_extend_method == "dashscope":
@@ -253,22 +236,14 @@ def generate(args):
             prompt_expander = QwenPromptExpander(
                 model_name=args.prompt_extend_model,
                 is_vl="i2v" in args.task,
-                device=rank)
+                device=device)  # Use MPS/CPU device instead of rank
         else:
             raise NotImplementedError(
                 f"Unsupport prompt_extend_method: {args.prompt_extend_method}")
 
     cfg = WAN_CONFIGS[args.task]
-    if args.ulysses_size > 1:
-        assert cfg.num_heads % args.ulysses_size == 0, f"`num_heads` must be divisible by `ulysses_size`."
-
     logging.info(f"Generation job args: {args}")
     logging.info(f"Generation model config: {cfg}")
-
-    if dist.is_initialized():
-        base_seed = [args.base_seed] if rank == 0 else [None]
-        dist.broadcast_object_list(base_seed, src=0)
-        args.base_seed = base_seed[0]
 
     if "t2v" in args.task or "t2i" in args.task:
         if args.prompt is None:
@@ -276,35 +251,29 @@ def generate(args):
         logging.info(f"Input prompt: {args.prompt}")
         if args.use_prompt_extend:
             logging.info("Extending prompt ...")
-            if rank == 0:
-                prompt_output = prompt_expander(
-                    args.prompt,
-                    tar_lang=args.prompt_extend_target_lang,
-                    seed=args.base_seed)
-                if prompt_output.status == False:
-                    logging.info(
-                        f"Extending prompt failed: {prompt_output.message}")
-                    logging.info("Falling back to original prompt.")
-                    input_prompt = args.prompt
-                else:
-                    input_prompt = prompt_output.prompt
-                input_prompt = [input_prompt]
+            prompt_output = prompt_expander(
+                args.prompt,
+                tar_lang=args.prompt_extend_target_lang,
+                seed=args.base_seed)
+            if prompt_output.status == False:
+                logging.info(
+                    f"Extending prompt failed: {prompt_output.message}")
+                logging.info("Falling back to original prompt.")
+                input_prompt = args.prompt
             else:
-                input_prompt = [None]
-            if dist.is_initialized():
-                dist.broadcast_object_list(input_prompt, src=0)
-            args.prompt = input_prompt[0]
+                input_prompt = prompt_output.prompt
+            args.prompt = input_prompt
             logging.info(f"Extended prompt: {args.prompt}")
 
         logging.info("Creating WanT2V pipeline.")
         wan_t2v = wan.WanT2V(
             config=cfg,
             checkpoint_dir=args.ckpt_dir,
-            device_id=device,
-            rank=rank,
-            t5_fsdp=args.t5_fsdp,
-            dit_fsdp=args.dit_fsdp,
-            use_usp=(args.ulysses_size > 1 or args.ring_size > 1),
+            device_id=device,  # Use MPS/CPU device instead of local_rank
+            rank=0,  # Single device, so use rank 0
+            t5_fsdp=False,  # Disable FSDP (not supported on MPS)
+            dit_fsdp=False,  # Disable FSDP (not supported on MPS)
+            use_usp=False,  # Disable Ulysses/ring parallelism (single device)
             t5_cpu=args.t5_cpu,
         )
 
@@ -332,36 +301,30 @@ def generate(args):
         img = Image.open(args.image).convert("RGB")
         if args.use_prompt_extend:
             logging.info("Extending prompt ...")
-            if rank == 0:
-                prompt_output = prompt_expander(
-                    args.prompt,
-                    tar_lang=args.prompt_extend_target_lang,
-                    image=img,
-                    seed=args.base_seed)
-                if prompt_output.status == False:
-                    logging.info(
-                        f"Extending prompt failed: {prompt_output.message}")
-                    logging.info("Falling back to original prompt.")
-                    input_prompt = args.prompt
-                else:
-                    input_prompt = prompt_output.prompt
-                input_prompt = [input_prompt]
+            prompt_output = prompt_expander(
+                args.prompt,
+                tar_lang=args.prompt_extend_target_lang,
+                image=img,
+                seed=args.base_seed)
+            if prompt_output.status == False:
+                logging.info(
+                    f"Extending prompt failed: {prompt_output.message}")
+                logging.info("Falling back to original prompt.")
+                input_prompt = args.prompt
             else:
-                input_prompt = [None]
-            if dist.is_initialized():
-                dist.broadcast_object_list(input_prompt, src=0)
-            args.prompt = input_prompt[0]
+                input_prompt = prompt_output.prompt
+            args.prompt = input_prompt
             logging.info(f"Extended prompt: {args.prompt}")
 
         logging.info("Creating WanI2V pipeline.")
         wan_i2v = wan.WanI2V(
             config=cfg,
             checkpoint_dir=args.ckpt_dir,
-            device_id=device,
-            rank=rank,
-            t5_fsdp=args.t5_fsdp,
-            dit_fsdp=args.dit_fsdp,
-            use_usp=(args.ulysses_size > 1 or args.ring_size > 1),
+            device_id=device,  # Use MPS/CPU device instead of local_rank
+            rank=0,  # Single device, so use rank 0
+            t5_fsdp=False,  # Disable FSDP (not supported on MPS)
+            dit_fsdp=False,  # Disable FSDP (not supported on MPS)
+            use_usp=False,  # Disable Ulysses/ring parallelism (single device)
             t5_cpu=args.t5_cpu,
         )
 
@@ -378,33 +341,31 @@ def generate(args):
             seed=args.base_seed,
             offload_model=args.offload_model)
 
-    if rank == 0:
-        if args.save_file is None:
-            formatted_time = datetime.now().strftime("%Y%m%d_%H%M%S")
-            formatted_prompt = args.prompt.replace(" ", "_").replace("/",
-                                                                     "_")[:50]
-            suffix = '.png' if "t2i" in args.task else '.mp4'
-            args.save_file = f"{args.task}_{args.size}_{args.ulysses_size}_{args.ring_size}_{formatted_prompt}_{formatted_time}" + suffix
+    # Save output (single device, so no rank check needed)
+    if args.save_file is None:
+        formatted_time = datetime.now().strftime("%Y%m%d_%H%M%S")
+        formatted_prompt = args.prompt.replace(" ", "_").replace("/", "_")[:50]
+        suffix = '.png' if "t2i" in args.task else '.mp4'
+        args.save_file = f"{args.task}_{args.size}_{formatted_prompt}_{formatted_time}" + suffix
 
-        if "t2i" in args.task:
-            logging.info(f"Saving generated image to {args.save_file}")
-            cache_image(
-                tensor=video.squeeze(1)[None],
-                save_file=args.save_file,
-                nrow=1,
-                normalize=True,
-                value_range=(-1, 1))
-        else:
-            logging.info(f"Saving generated video to {args.save_file}")
-            cache_video(
-                tensor=video[None],
-                save_file=args.save_file,
-                fps=cfg.sample_fps,
-                nrow=1,
-                normalize=True,
-                value_range=(-1, 1))
+    if "t2i" in args.task:
+        logging.info(f"Saving generated image to {args.save_file}")
+        cache_image(
+            tensor=video.squeeze(1)[None],
+            save_file=args.save_file,
+            nrow=1,
+            normalize=True,
+            value_range=(-1, 1))
+    else:
+        logging.info(f"Saving generated video to {args.save_file}")
+        cache_video(
+            tensor=video[None],
+            save_file=args.save_file,
+            fps=cfg.sample_fps,
+            nrow=1,
+            normalize=True,
+            value_range=(-1, 1))
     logging.info("Finished.")
-
 
 if __name__ == "__main__":
     args = _parse_args()

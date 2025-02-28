@@ -33,25 +33,26 @@ def flash_attention(
     causal=False,
     window_size=(-1, -1),
     deterministic=False,
-    dtype=torch.bfloat16,
+    dtype=torch.float32,
     version=None,
 ):
     """
-    q:              [B, Lq, Nq, C1].
-    k:              [B, Lk, Nk, C1].
-    v:              [B, Lk, Nk, C2]. Nq must be divisible by Nk.
-    q_lens:         [B].
-    k_lens:         [B].
-    dropout_p:      float. Dropout probability.
-    softmax_scale:  float. The scaling of QK^T before applying softmax.
-    causal:         bool. Whether to apply causal attention mask.
-    window_size:    (left right). If not (-1, -1), apply sliding window local attention.
-    deterministic:  bool. If True, slightly slower and uses more memory.
-    dtype:          torch.dtype. Apply when dtype of q/k/v is not float16/bfloat16.
+    Flash attention implementation with fallback for CPU and MPS devices
     """
-    half_dtypes = (torch.float16, torch.bfloat16)
+    half_dtypes = (torch.float16, torch.float32)
     assert dtype in half_dtypes
-    assert q.device.type == 'cuda' and q.size(-1) <= 256
+    assert q.size(-1) <= 256, "Sequence length exceeds the maximum limit."
+
+    # Add CPU/MPS fallback implementation
+    if not (FLASH_ATTN_2_AVAILABLE or FLASH_ATTN_3_AVAILABLE) or q.device.type in ['cpu', 'mps']:
+        # Implement standard attention for CPU/MPS
+        return attention(q, k, v,
+                        q_lens=q_lens,
+                        k_lens=k_lens,
+                        dropout_p=dropout_p,
+                        softmax_scale=softmax_scale,
+                        causal=causal,
+                        window_size=window_size)
 
     # params
     b, lq, lk, out_dtype = q.size(0), q.size(1), k.size(1), q.dtype
@@ -142,7 +143,7 @@ def attention(
     causal=False,
     window_size=(-1, -1),
     deterministic=False,
-    dtype=torch.bfloat16,
+    dtype=torch.float32,
     fa_version=None,
 ):
     if FLASH_ATTN_2_AVAILABLE or FLASH_ATTN_3_AVAILABLE:

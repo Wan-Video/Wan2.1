@@ -44,7 +44,7 @@ LM_EN_SYS_PROMPT = \
     '''1. For overly concise user inputs, reasonably infer and add details to make the video more complete and appealing without altering the original intent;\n''' \
     '''2. Enhance the main features in user descriptions (e.g., appearance, expression, quantity, race, posture, etc.), visual style, spatial relationships, and shot scales;\n''' \
     '''3. Output the entire prompt in English, retaining original text in quotes and titles, and preserving key input information;\n''' \
-    '''4. Prompts should match the user’s intent and accurately reflect the specified style. If the user does not specify a style, choose the most appropriate style for the video;\n''' \
+    '''4. Prompts should match the user's intent and accurately reflect the specified style. If the user does not specify a style, choose the most appropriate style for the video;\n''' \
     '''5. Emphasize motion information and different camera movements present in the input description;\n''' \
     '''6. Your output should have natural motion attributes. For the target category described, add natural actions of the target using simple and direct verbs;\n''' \
     '''7. The revised prompt should be around 80-100 characters long.\n''' \
@@ -82,7 +82,7 @@ VL_EN_SYS_PROMPT =  \
     '''1. For overly brief user inputs, reasonably infer and supplement details without changing the original meaning, making the image more complete and visually appealing;\n''' \
     '''2. Improve the characteristics of the main subject in the user's description (such as appearance, expression, quantity, ethnicity, posture, etc.), rendering style, spatial relationships, and camera angles;\n''' \
     '''3. The overall output should be in Chinese, retaining original text in quotes and book titles as well as important input information without rewriting them;\n''' \
-    '''4. The prompt should match the user’s intent and provide a precise and detailed style description. If the user has not specified a style, you need to carefully analyze the style of the user's provided photo and use that as a reference for rewriting;\n''' \
+    '''4. The prompt should match the user's intent and provide a precise and detailed style description. If the user has not specified a style, you need to carefully analyze the style of the user's provided photo and use that as a reference for rewriting;\n''' \
     '''5. If the prompt is an ancient poem, classical Chinese elements should be emphasized in the generated prompt, avoiding references to Western, modern, or foreign scenes;\n''' \
     '''6. You need to emphasize movement information in the input and different camera angles;\n''' \
     '''7. Your output should convey natural movement attributes, incorporating natural actions related to the described subject category, using simple and direct verbs as much as possible;\n''' \
@@ -93,7 +93,7 @@ VL_EN_SYS_PROMPT =  \
     '''1. A Japanese fresh film-style photo of a young East Asian girl with double braids sitting by the boat. The girl wears a white square collar puff sleeve dress, decorated with pleats and buttons. She has fair skin, delicate features, and slightly melancholic eyes, staring directly at the camera. Her hair falls naturally, with bangs covering part of her forehead. She rests her hands on the boat, appearing natural and relaxed. The background features a blurred outdoor scene, with hints of blue sky, mountains, and some dry plants. The photo has a vintage film texture. A medium shot of a seated portrait.\n''' \
     '''2. An anime illustration in vibrant thick painting style of a white girl with cat ears holding a folder, showing a slightly dissatisfied expression. She has long dark purple hair and red eyes, wearing a dark gray skirt and a light gray top with a white waist tie and a name tag in bold Chinese characters that says "紫阳" (Ziyang). The background has a light yellow indoor tone, with faint outlines of some furniture visible. A pink halo hovers above her head, in a smooth Japanese cel-shading style. A close-up shot from a slightly elevated perspective.\n''' \
     '''3. CG game concept digital art featuring a huge crocodile with its mouth wide open, with trees and thorns growing on its back. The crocodile's skin is rough and grayish-white, resembling stone or wood texture. Its back is lush with trees, shrubs, and thorny protrusions. With its mouth agape, the crocodile reveals a pink tongue and sharp teeth. The background features a dusk sky with some distant trees, giving the overall scene a dark and cold atmosphere. A close-up from a low angle.\n''' \
-    '''4. In the style of an American drama promotional poster, Walter White sits in a metal folding chair wearing a yellow protective suit, with the words "Breaking Bad" written in sans-serif English above him, surrounded by piles of dollar bills and blue plastic storage boxes. He wears glasses, staring forward, dressed in a yellow jumpsuit, with his hands resting on his knees, exuding a calm and confident demeanor. The background shows an abandoned, dim factory with light filtering through the windows. There’s a noticeable grainy texture. A medium shot with a straight-on close-up of the character.\n''' \
+    '''4. In the style of an American drama promotional poster, Walter White sits in a metal folding chair wearing a yellow protective suit, with the words "Breaking Bad" written in sans-serif English above him, surrounded by piles of dollar bills and blue plastic storage boxes. He wears glasses, staring forward, dressed in a yellow jumpsuit, with his hands resting on his knees, exuding a calm and confident demeanor. The background shows an abandoned, dim factory with light filtering through the windows. There's a noticeable grainy texture. A medium shot with a straight-on close-up of the character.\n''' \
     '''Directly output the rewritten English text.'''
 
 
@@ -347,7 +347,7 @@ class QwenPromptExpander(PromptExpander):
                 use_fast=True)
             self.model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
                 self.model_name,
-                torch_dtype=torch.bfloat16 if FLASH_VER == 2 else
+                torch_dtype=torch.float32 if FLASH_VER == 2 else
                 torch.float16 if "AWQ" in self.model_name else "auto",
                 attn_implementation="flash_attention_2"
                 if FLASH_VER == 2 else None,
@@ -362,6 +362,16 @@ class QwenPromptExpander(PromptExpander):
                 if FLASH_VER == 2 else None,
                 device_map="cpu")
             self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
+
+        # Initialize device
+        if isinstance(device, torch.device):
+            self.device = device
+        elif device == "mps" or (isinstance(device, str) and "mps" in device):
+            self.device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
+        elif isinstance(device, int) and device == -1:
+            self.device = torch.device("cpu")
+        else:
+            self.device = torch.device(f"cuda:{device}" if isinstance(device, int) else device)
 
     def extend(self, prompt, system_prompt, seed=-1, *args, **kwargs):
         self.model = self.model.to(self.device)
