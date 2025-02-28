@@ -155,8 +155,8 @@ def _parse_args():
     parser.add_argument(
         "--prompt_extend_target_lang",
         type=str,
-        default="ch",
-        choices=["ch", "en"],
+        default="zh",
+        choices=["zh", "en"],
         help="The target language of prompt extend.")
     parser.add_argument(
         "--base_seed",
