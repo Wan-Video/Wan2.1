@@ -103,6 +103,7 @@ class WanI2V:
                                          config.clip_checkpoint),
             tokenizer_path=os.path.join(checkpoint_dir, config.clip_tokenizer))
 
+        logging.info(f"Creating WanModel from {checkpoint_dir}")
         if not fp8:
             self.model = WanModel.from_pretrained(checkpoint_dir)
         else:
@@ -131,7 +132,6 @@ class WanI2V:
 
             with init_empty_weights():
                 self.model = WanModel(**TRANSFORMER_CONFIG)
-            logging.info(f"Creating WanModel from {checkpoint_dir}")
             
             base_dtype=torch.bfloat16
             dtype=torch.float8_e4m3fn
@@ -382,9 +382,10 @@ class WanI2V:
             if offload_model:
                 self.model.cpu()
                 torch.cuda.empty_cache()
+                # load vae model back to device
+                self.vae.model.to(self.device)
 
             if self.rank == 0:
-                self.vae.model.to(self.device)
                 videos = self.vae.decode(x0, device=self.device)
 
         del noise, latent
