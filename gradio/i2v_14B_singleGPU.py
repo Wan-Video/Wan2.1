@@ -80,6 +80,7 @@ def load_model(value):
             )
             print("done", flush=True)
             return '480P'
+    return value
 
 
 def prompt_enc(prompt, img, tar_lang):
