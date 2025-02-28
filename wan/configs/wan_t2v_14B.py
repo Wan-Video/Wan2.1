@@ -10,6 +10,7 @@ t2v_14B.update(wan_shared_cfg)
 
 # t5
 t2v_14B.t5_checkpoint = 'models_t5_umt5-xxl-enc-bf16.pth'
+# t2v_14B.t5_checkpoint = 'umt5-xxl-enc-fp8_e4m3fn.safetensors' # fp8 model
 t2v_14B.t5_tokenizer = 'google/umt5-xxl'
 
 # vae

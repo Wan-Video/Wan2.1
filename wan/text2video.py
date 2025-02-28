@@ -74,13 +74,19 @@ class WanT2V:
         self.param_dtype = config.param_dtype
 
         shard_fn = partial(shard_model, device_id=device_id)
+        if config.t5_checkpoint == 'umt5-xxl-enc-fp8_e4m3fn.safetensors':
+            quantization = "fp8_e4m3fn" 
+        else:
+            quantization = "disabled"
+        
         self.text_encoder = T5EncoderModel(
             text_len=config.text_len,
             dtype=config.t5_dtype,
             device=torch.device('cpu'),
             checkpoint_path=os.path.join(checkpoint_dir, config.t5_checkpoint),
             tokenizer_path=os.path.join(checkpoint_dir, config.t5_tokenizer),
-            shard_fn=shard_fn if t5_fsdp else None)
+            shard_fn=shard_fn if t5_fsdp else None,
+            quantization=quantization)
 
         self.vae_stride = config.vae_stride
         self.patch_size = config.patch_size
@@ -221,13 +227,15 @@ class WanT2V:
 
         if not self.t5_cpu:
             self.text_encoder.model.to(self.device)
-            context = self.text_encoder([input_prompt], self.device)
-            context_null = self.text_encoder([n_prompt], self.device)
+            with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=True):
+                context = self.text_encoder([input_prompt], self.device)
+                context_null = self.text_encoder([n_prompt], self.device)
             if offload_model:
                 self.text_encoder.model.cpu()
         else:
-            context = self.text_encoder([input_prompt], torch.device('cpu'))
-            context_null = self.text_encoder([n_prompt], torch.device('cpu'))
+            with torch.autocast(device_type="cpu", dtype=torch.bfloat16, enabled=True):
+                context = self.text_encoder([input_prompt], torch.device('cpu'))
+                context_null = self.text_encoder([n_prompt], torch.device('cpu'))
             context = [t.to(self.device) for t in context]
             context_null = [t.to(self.device) for t in context_null]
 
