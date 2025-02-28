@@ -119,7 +119,7 @@ This repository supports two Text-to-Video models (1.3B and 14B) and two resolut
 </table>
 
 
-##### (1) Without Prompt Extention
+##### (1) Without Prompt Extension
 
 To facilitate implementation, we will start with a basic version of the inference process that skips the [prompt extension](#2-using-prompt-extention) step.
 
@@ -146,7 +146,7 @@ torchrun --nproc_per_node=8 generate.py --task t2v-14B --size 1280*720 --ckpt_di
 ```
 
 
-##### (2) Using Prompt Extention
+##### (2) Using Prompt Extension
 
 Extending the prompts can effectively enrich the details in the generated videos, further enhancing the video quality. Therefore, we recommend enabling prompt extension. We provide the following two methods for prompt extension:
 
@@ -171,7 +171,7 @@ DASH_API_KEY=your_key python generate.py  --task t2v-14B --size 1280*720 --ckpt_
 python generate.py  --task t2v-14B --size 1280*720 --ckpt_dir ./Wan2.1-T2V-14B --prompt "Two anthropomorphic cats in comfy boxing gear and bright gloves fight intensely on a spotlighted stage" --use_prompt_extend --prompt_extend_method 'local_qwen' --prompt_extend_target_lang 'ch'
 ```
 
-##### (3) Runing local gradio
+##### (3) Running local gradio
 
 ```
 cd gradio
@@ -215,7 +215,7 @@ Similar to Text-to-Video, Image-to-Video is also divided into processes with and
 </table>
 
 
-##### (1) Without Prompt Extention
+##### (1) Without Prompt Extension
 
 - Single-GPU inference
 ```
@@ -232,22 +232,22 @@ pip install "xfuser>=0.4.1"
 torchrun --nproc_per_node=8 generate.py --task i2v-14B --size 1280*720 --ckpt_dir ./Wan2.1-I2V-14B-720P --image examples/i2v_input.JPG --dit_fsdp --t5_fsdp --ulysses_size 8 --prompt "Summer beach vacation style, a white cat wearing sunglasses sits on a surfboard. The fluffy-furred feline gazes directly at the camera with a relaxed expression. Blurred beach scenery forms the background featuring crystal-clear waters, distant green hills, and a blue sky dotted with white clouds. The cat assumes a naturally relaxed posture, as if savoring the sea breeze and warm sunlight. A close-up shot highlights the feline's intricate details and the refreshing atmosphere of the seaside."
 ```
 
-##### (2) Using Prompt Extention
+##### (2) Using Prompt Extension
 
 
 The process of prompt extension can be referenced [here](#2-using-prompt-extention).
 
-Run with local prompt extention using `Qwen/Qwen2.5-VL-7B-Instruct`:
+Run with local prompt extension using `Qwen/Qwen2.5-VL-7B-Instruct`:
 ```
 python generate.py --task i2v-14B --size 1280*720 --ckpt_dir ./Wan2.1-I2V-14B-720P --image examples/i2v_input.JPG --use_prompt_extend --prompt_extend_model Qwen/Qwen2.5-VL-7B-Instruct --prompt "Summer beach vacation style, a white cat wearing sunglasses sits on a surfboard. The fluffy-furred feline gazes directly at the camera with a relaxed expression. Blurred beach scenery forms the background featuring crystal-clear waters, distant green hills, and a blue sky dotted with white clouds. The cat assumes a naturally relaxed posture, as if savoring the sea breeze and warm sunlight. A close-up shot highlights the feline's intricate details and the refreshing atmosphere of the seaside."
 ```
 
-Run with remote prompt extention using `dashscope`:
+Run with remote prompt extension using `dashscope`:
 ```
 DASH_API_KEY=your_key python generate.py --task i2v-14B --size 1280*720 --ckpt_dir ./Wan2.1-I2V-14B-720P --image examples/i2v_input.JPG --use_prompt_extend --prompt_extend_method 'dashscope' --prompt "Summer beach vacation style, a white cat wearing sunglasses sits on a surfboard. The fluffy-furred feline gazes directly at the camera with a relaxed expression. Blurred beach scenery forms the background featuring crystal-clear waters, distant green hills, and a blue sky dotted with white clouds. The cat assumes a naturally relaxed posture, as if savoring the sea breeze and warm sunlight. A close-up shot highlights the feline's intricate details and the refreshing atmosphere of the seaside."
 ```
 
-##### (3) Runing local gradio
+##### (3) Running local gradio
 
 ```
 cd gradio
@@ -266,7 +266,7 @@ DASH_API_KEY=your_key python i2v_14B_singleGPU.py --prompt_extend_method 'dashsc
 
 Wan2.1 is a unified model for both image and video generation. Since it was trained on both types of data, it can also generate images. The command for generating images is similar to video generation, as follows:
 
-##### (1) Without Prompt Extention
+##### (1) Without Prompt Extension
 
 - Single-GPU inference
 ```
@@ -373,7 +373,7 @@ We curated and deduplicated a candidate dataset comprising a vast amount of imag
 
 
 ##### Comparisons to SOTA
-We compared **Wan2.1** with leading open-source and closed-source models to evaluate the performace. Using our carefully designed set of 1,035 internal prompts, we tested across 14 major dimensions and 26 sub-dimensions. We then compute the total score by performing a weighted calculation on the scores of each dimension, utilizing weights derived from human preferences in the matching process. The detailed results are shown in the table below. These results demonstrate our model's superior performance compared to both open-source and closed-source models.
+We compared **Wan2.1** with leading open-source and closed-source models to evaluate the performance. Using our carefully designed set of 1,035 internal prompts, we tested across 14 major dimensions and 26 sub-dimensions. We then compute the total score by performing a weighted calculation on the scores of each dimension, utilizing weights derived from human preferences in the matching process. The detailed results are shown in the table below. These results demonstrate our model's superior performance compared to both open-source and closed-source models.
 
 ![figure1](assets/vben_vs_sota.png "figure1")
 
@@ -391,7 +391,7 @@ If you find our work helpful, please cite us.
 ```
 
 ## License Agreement
-The models in this repository are licensed under the Apache 2.0 License. We claim no rights over the your generate contents, granting you the freedom to use them while ensuring that your usage complies with the provisions of this license. You are fully accountable for your use of the models, which must not involve sharing any content that violates applicable laws, causes harm to individuals or groups, disseminates personal information intended for harm, spreads misinformation, or targets vulnerable populations. For a complete list of restrictions and details regarding your rights, please refer to the full text of the [license](LICENSE.txt).
+The models in this repository are licensed under the Apache 2.0 License. We claim no rights over the your generated contents, granting you the freedom to use them while ensuring that your usage complies with the provisions of this license. You are fully accountable for your use of the models, which must not involve sharing any content that violates applicable laws, causes harm to individuals or groups, disseminates personal information intended for harm, spreads misinformation, or targets vulnerable populations. For a complete list of restrictions and details regarding your rights, please refer to the full text of the [license](LICENSE.txt).
 
 
 ## Acknowledgements
