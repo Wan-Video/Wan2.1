@@ -1,0 +1,64 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wan"
+version = "2.1.0"
+description = "Wan: Open and Advanced Large-Scale Video Generative Models"
+authors = [
+    { name = "Wan Team", discord = "https://discord.gg/p5XbdQV7" }
+]
+license = { file = "LICENSE.txt" }
+readme = "README.md"
+requires-python = ">=3.10,<4.0"
+dependencies = [
+    "torch>=2.4.0",
+    "torchvision>=0.19.0",
+    "opencv-python>=4.9.0.80",
+    "diffusers>=0.31.0",
+    "transformers>=4.49.0",
+    "tokenizers>=0.20.3",
+    "accelerate>=1.1.1",
+    "tqdm",
+    "imageio",
+    "easydict",
+    "ftfy",
+    "dashscope",
+    "imageio-ffmpeg",
+    "flash_attn",
+    "gradio>=5.0.0",
+    "numpy>=1.23.5,<2"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "black",
+    "flake8",
+    "isort",
+    "mypy",
+    "huggingface-hub[cli]"
+]
+
+[project.urls]
+homepage = "https://wanxai.com"
+documentation = "https://github.com/Wan-Video/Wan2.1"
+repository = "https://github.com/Wan-Video/Wan2.1"
+huggingface = "https://huggingface.co/Wan-AI/"
+modelscope = "https://modelscope.cn/organization/Wan-AI"
+discord = "https://discord.gg/p5XbdQV7"
+
+[tool.setuptools]
+packages = ["wan"]
+
+[tool.black]
+line-length = 88
+
+[tool.isort]
+profile = "black"
+
+[tool.mypy]
+strict = true
+
+
