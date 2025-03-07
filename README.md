@@ -10,6 +10,44 @@
 
 -----
 
+## Table of Contents
+
+- [Wan2.1](#wan21)
+  - [Video Demos](#video-demos)
+  - [🔥 Latest News!!](#-latest-news)
+  - [📑 Todo List](#-todo-list)
+  - [Quickstart](#quickstart)
+    - [Installation](#installation)
+    - [Model Download](#model-download)
+    - [Run Text-to-Video Generation](#run-text-to-video-generation)
+      - [(1) Without Prompt Extension](#1-without-prompt-extension)
+      - [(2) Using Prompt Extension](#2-using-prompt-extension)
+      - [(3) Running Local Gradio](#3-running-local-gradio)
+    - [Run Image-to-Video Generation](#run-image-to-video-generation)
+      - [(1) Without Prompt Extension](#1-without-prompt-extension-1)
+      - [(2) Using Prompt Extension](#2-using-prompt-extension-1)
+      - [(3) Running Local Gradio](#3-running-local-gradio-1)
+    - [Run Text-to-Image Generation](#run-text-to-image-generation)
+      - [(1) Without Prompt Extension](#1-without-prompt-extension-2)
+      - [(2) With Prompt Extension](#2-with-prompt-extension)
+  - [Manual Evaluation](#manual-evaluation)
+    - [(1) Text-to-Video Evaluation](#1-text-to-video-evaluation)
+    - [(2) Image-to-Video Evaluation](#2-image-to-video-evaluation)
+  - [Computational Efficiency on Different GPUs](#computational-efficiency-on-different-gpus)
+  - [Community Contributions](#community-contributions)
+  - [Introduction of Wan2.1](#introduction-of-wan21)
+    - [(1) 3D Variational Autoencoders](#1-3d-variational-autoencoders)
+    - [(2) Video Diffusion DiT](#2-video-diffusion-dit)
+    - [Data](#data)
+    - [Comparisons to SOTA](#comparisons-to-sota)
+  - [Citation](#citation)
+  - [License Agreement](#license-agreement)
+  - [Acknowledgements](#acknowledgements)
+  - [Contact Us](#contact-us)
+
+
+
+
 [**Wan: Open and Advanced Large-Scale Video Generative Models**]("") <be>
 
 In this repository, we present **Wan2.1**, a comprehensive and open suite of video foundation models that pushes the boundaries of video generation. **Wan2.1** offers these key features:
