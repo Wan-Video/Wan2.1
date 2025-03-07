@@ -128,8 +128,8 @@ class PromptExpander:
     def extend(self, prompt, system_prompt, seed=-1, *args, **kwargs):
         pass
 
-    def decide_system_prompt(self, tar_lang="zh"):
-        zh = tar_lang == "zh"
+    def decide_system_prompt(self, tar_lang="ch"):
+        zh = tar_lang == "ch"
         if zh:
             return LM_ZH_SYS_PROMPT if not self.is_vl else VL_ZH_SYS_PROMPT
         else:
@@ -137,7 +137,7 @@ class PromptExpander:
 
     def __call__(self,
                  prompt,
-                 tar_lang="zh",
+                 tar_lang="ch",
                  image=None,
                  seed=-1,
                  *args,
