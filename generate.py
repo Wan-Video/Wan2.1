@@ -127,6 +127,11 @@ def _parse_args():
         default=False,
         help="Whether to use FSDP for DiT.")
     parser.add_argument(
+        "--fp8",
+        action="store_true",
+        default=False,
+        help="Whether to use fp8.")
+    parser.add_argument(
         "--save_file",
         type=str,
         default=None,
@@ -306,6 +311,7 @@ def generate(args):
             dit_fsdp=args.dit_fsdp,
             use_usp=(args.ulysses_size > 1 or args.ring_size > 1),
             t5_cpu=args.t5_cpu,
+            fp8=args.fp8,
         )
 
         logging.info(
@@ -363,6 +369,7 @@ def generate(args):
             dit_fsdp=args.dit_fsdp,
             use_usp=(args.ulysses_size > 1 or args.ring_size > 1),
             t5_cpu=args.t5_cpu,
+            fp8=args.fp8,
         )
 
         logging.info("Generating video ...")
