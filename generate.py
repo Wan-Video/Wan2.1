@@ -27,6 +27,9 @@ EXAMPLE_PROMPT = {
     "t2i-14B": {
         "prompt": "一个朴素端庄的美人",
     },
+    "t2i-1.3B": {
+        "prompt": "一个朴素端庄的美人",
+    },
     "i2v-14B": {
         "prompt":
             "Summer beach vacation style, a white cat wearing sunglasses sits on a surfboard. The fluffy-furred feline gazes directly at the camera with a relaxed expression. Blurred beach scenery forms the background featuring crystal-clear waters, distant green hills, and a blue sky dotted with white clouds. The cat assumes a naturally relaxed posture, as if savoring the sea breeze and warm sunlight. A close-up shot highlights the feline's intricate details and the refreshing atmosphere of the seaside.",
