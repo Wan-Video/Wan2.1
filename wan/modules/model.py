@@ -80,6 +80,8 @@ class WanRMSNorm(nn.Module):
         Args:
             x(Tensor): Shape [B, L, C]
         """
+        if self.weight.dtype != torch.bfloat16:
+            self.weight.data = self.weight.data.to(dtype=torch.bfloat16)
         return self._norm(x.float()).type_as(x) * self.weight
 
     def _norm(self, x):
@@ -290,6 +292,9 @@ class WanAttentionBlock(nn.Module):
             freqs(Tensor): Rope freqs, shape [1024, C / num_heads / 2]
         """
         assert e.dtype == torch.float32
+        if self.modulation.dtype != torch.float16:
+            # 如果不是 fp16，则转换为 fp16
+            self.modulation.data = self.modulation.data.to(dtype=torch.float16)
         with amp.autocast(dtype=torch.float32):
             e = (self.modulation + e).chunk(6, dim=1)
         assert e[0].dtype == torch.float32
@@ -337,6 +342,9 @@ class Head(nn.Module):
             e(Tensor): Shape [B, C]
         """
         assert e.dtype == torch.float32
+        if self.modulation.dtype != torch.float16:
+            # 如果不是 fp16，则转换为 fp16
+            self.modulation.data = self.modulation.data.to(dtype=torch.float16)
         with amp.autocast(dtype=torch.float32):
             e = (self.modulation + e.unsqueeze(1)).chunk(2, dim=1)
             x = (self.head(self.norm(x) * (1 + e[1]) + e[0]))
