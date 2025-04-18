@@ -96,7 +96,8 @@ class WanI2V:
             tokenizer_path=os.path.join(checkpoint_dir, config.clip_tokenizer))
 
         logging.info(f"Creating WanModel from {checkpoint_dir}")
-        self.model = WanModel.from_pretrained(checkpoint_dir)
+        #self.model = WanModel.from_pretrained(checkpoint_dir)
+        self.model = WanModel.from_pretrained(checkpoint_dir ,torch_dtype=torch.float8_e4m3fn)
         self.model.eval().requires_grad_(False)
 
         if t5_fsdp or dit_fsdp or use_usp:
@@ -174,6 +175,7 @@ class WanI2V:
                 - H: Frame height (from max_area)
                 - W: Frame width from max_area)
         """
+        offload_model = False
         img = TF.to_tensor(img).sub_(0.5).div_(0.5).to(self.device)
 
         F = frame_num
@@ -295,7 +297,19 @@ class WanI2V:
             if offload_model:
                 torch.cuda.empty_cache()
 
-            self.model.to(self.device)
+            
+            # import gc
+            # del self.text_encoder
+            # del self.clip
+            # del self.vae
+            # gc.collect()  # 立即触发垃圾回收
+            # torch.cuda.empty_cache()  # 清空CUDA缓存
+            # torch.cuda.reset_peak_memory_stats()
+            
+            # start_mem = torch.cuda.memory_allocated()
+            # print(f"该阶段开始时显存占用：{start_mem / 1024**3:.2f} GB")
+            
+            # self.model.to(self.device)
             for _, t in enumerate(tqdm(timesteps)):
                 latent_model_input = [latent.to(self.device)]
                 timestep = [t]
@@ -329,6 +343,9 @@ class WanI2V:
                 x0 = [latent.to(self.device)]
                 del latent_model_input, timestep
 
+            # peak_mem_bytes = torch.cuda.max_memory_allocated()
+            # print(f"该阶段最大显存占用：{peak_mem_bytes / 1024**3:.2f} GB")
+        
             if offload_model:
                 self.model.cpu()
                 torch.cuda.empty_cache()
