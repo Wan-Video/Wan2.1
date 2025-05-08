@@ -41,6 +41,14 @@ EXAMPLE_PROMPT = {
             "last_frame":
                 "examples/flf2v_input_last_frame.png",
     },
+    "vace-1.3B": {
+        "src_ref_images": './bag.jpg,./heben.png',
+        "prompt": "优雅的女士在精品店仔细挑选包包，她身穿一袭黑色修身连衣裙，搭配珍珠项链，展现出成熟女性的魅力。手中拿着一款复古风格的棕色皮质半月形手提包，正细致地观察其工艺与质地。店内灯光柔和，木质装潢营造出温馨而高级的氛围。中景，侧拍捕捉女士挑选瞬间，展现其品味与气质。"
+    },
+    "vace-14B": {
+        "src_ref_images": './bag.jpg,./heben.png',
+        "prompt": "优雅的女士在精品店仔细挑选包包，她身穿一袭黑色修身连衣裙，搭配珍珠项链，展现出成熟女性的魅力。手中拿着一款复古风格的棕色皮质半月形手提包，正细致地观察其工艺与质地。店内灯光柔和，木质装潢营造出温馨而高级的氛围。中景，侧拍捕捉女士挑选瞬间，展现其品味与气质。"
+    }
 }
 
 
@@ -52,14 +60,22 @@ def _validate_args(args):
 
     # The default sampling steps are 40 for image-to-video tasks and 50 for text-to-video tasks.
     if args.sample_steps is None:
-        args.sample_steps = 40 if "i2v" in args.task else 50
+        args.sample_steps = 50
+        if "vace" in args.task:
+            args.sample_steps = 25
+        elif "i2v" in args.task:
+            args.sample_steps = 40
+
 
     if args.sample_shift is None:
         args.sample_shift = 5.0
         if "i2v" in args.task and args.size in ["832*480", "480*832"]:
             args.sample_shift = 3.0
-        if "flf2v" in args.task:
+        elif "flf2v" in args.task:
             args.sample_shift = 16
+        elif "vace" in args.task:
+            args.sample_shift = 3.0
+
 
     # The default number of frames are 1 for text-to-image tasks and 81 for other tasks.
     if args.frame_num is None:
@@ -141,6 +157,21 @@ def _parse_args():
         type=str,
         default=None,
         help="The file to save the generated image or video to.")
+    parser.add_argument(
+        "--src_video",
+        type=str,
+        default=None,
+        help="The file of the source video. Default None.")
+    parser.add_argument(
+        "--src_mask",
+        type=str,
+        default=None,
+        help="The file of the source mask. Default None.")
+    parser.add_argument(
+        "--src_ref_images",
+        type=str,
+        default=None,
+        help="The file list of the source reference images. Separated by ','. Default None.")
     parser.add_argument(
         "--prompt",
         type=str,
@@ -397,7 +428,7 @@ def generate(args):
             guide_scale=args.sample_guide_scale,
             seed=args.base_seed,
             offload_model=args.offload_model)
-    else:
+    elif "flf2v" in args.task:
         if args.prompt is None:
             args.prompt = EXAMPLE_PROMPT[args.task]["prompt"]
         if args.first_frame is None or args.last_frame is None:
@@ -457,6 +488,60 @@ def generate(args):
             seed=args.base_seed,
             offload_model=args.offload_model
         )
+    elif "vace" in args.task:
+        if args.prompt is None:
+            args.prompt = EXAMPLE_PROMPT[args.model_name]["prompt"]
+            args.src_video = EXAMPLE_PROMPT[args.model_name].get("src_video", None)
+            args.src_mask = EXAMPLE_PROMPT[args.model_name].get("src_mask", None)
+            args.src_ref_images = EXAMPLE_PROMPT[args.model_name].get("src_ref_images", None)
+
+        logging.info(f"Input prompt: {args.prompt}")
+        if args.use_prompt_extend and args.use_prompt_extend != 'plain':
+            logging.info("Extending prompt ...")
+            if rank == 0:
+                prompt = prompt_expander.forward(args.prompt)
+                logging.info(f"Prompt extended from '{args.prompt}' to '{prompt}'")
+                input_prompt = [prompt]
+            else:
+                input_prompt = [None]
+            if dist.is_initialized():
+                dist.broadcast_object_list(input_prompt, src=0)
+            args.prompt = input_prompt[0]
+            logging.info(f"Extended prompt: {args.prompt}")
+
+        logging.info("Creating WanT2V pipeline.")
+        wan_vace = wan.WanVace(
+            config=cfg,
+            checkpoint_dir=args.ckpt_dir,
+            device_id=device,
+            rank=rank,
+            t5_fsdp=args.t5_fsdp,
+            dit_fsdp=args.dit_fsdp,
+            use_usp=(args.ulysses_size > 1 or args.ring_size > 1),
+            t5_cpu=args.t5_cpu,
+        )
+
+        src_video, src_mask, src_ref_images = wan_vace.prepare_source([args.src_video],
+                                                                    [args.src_mask],
+                                                                    [None if args.src_ref_images is None else args.src_ref_images.split(',')],
+                                                                    args.frame_num, SIZE_CONFIGS[args.size], device)
+
+        logging.info(f"Generating video...")
+        video = wan_vace.generate(
+            args.prompt,
+            src_video,
+            src_mask,
+            src_ref_images,
+            size=SIZE_CONFIGS[args.size],
+            frame_num=args.frame_num,
+            shift=args.sample_shift,
+            sample_solver=args.sample_solver,
+            sampling_steps=args.sample_steps,
+            guide_scale=args.sample_guide_scale,
+            seed=args.base_seed,
+            offload_model=args.offload_model)
+    else:
+        raise ValueError(f"Unkown task type: {args.task}")
 
     if rank == 0:
         if args.save_file is None:
