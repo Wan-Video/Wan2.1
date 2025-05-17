@@ -11,6 +11,7 @@ from functools import partial
 
 import torch
 import torch.cuda.amp as amp
+import torch.nn as nn
 import torch.distributed as dist
 from tqdm import tqdm
 
@@ -24,6 +25,19 @@ from .utils.fm_solvers import (
     retrieve_timesteps,
 )
 from .utils.fm_solvers_unipc import FlowUniPCMultistepScheduler
+
+# def convert_linear_conv_to_fp8(module):
+#     for name, child in module.named_children():
+#         # 递归处理子模块
+#         convert_linear_conv_to_fp8(child)
+        
+#         # 判断是否为 Linear 或 Conv 层
+#         if isinstance(child, (nn.Linear, nn.Conv1d, nn.Conv2d, nn.Conv3d)):
+#             # 转换权重
+#             if hasattr(child, 'weight') and child.weight is not None:
+#                 # 保留 Parameter 类型，仅修改数据
+#                 child.weight.data = child.weight.data.to(dtype=torch.float8_e4m3fn)
+#                 # 可选：转换偏置（根据需求开启）
 
 
 class WanT2V:
@@ -84,7 +98,9 @@ class WanT2V:
             device=self.device)
 
         logging.info(f"Creating WanModel from {checkpoint_dir}")
-        self.model = WanModel.from_pretrained(checkpoint_dir)
+        self.model = WanModel.from_pretrained(checkpoint_dir ,torch_dtype=torch.float8_e4m3fn)
+        #self.model = WanModel.from_pretrained(checkpoint_dir )
+        
         self.model.eval().requires_grad_(False)
 
         if use_usp:
@@ -106,7 +122,9 @@ class WanT2V:
             dist.barrier()
         if dit_fsdp:
             self.model = shard_fn(self.model)
+            # convert_linear_conv_to_fp8(self.model)
         else:
+            # convert_linear_conv_to_fp8(self.model)
             self.model.to(self.device)
 
         self.sample_neg_prompt = config.sample_neg_prompt
@@ -156,6 +174,7 @@ class WanT2V:
                 - W: Frame width from size)
         """
         # preprocess
+        #offload_model = False
         F = frame_num
         target_shape = (self.vae.model.z_dim, (F - 1) // self.vae_stride[0] + 1,
                         size[1] // self.vae_stride[1],
@@ -229,6 +248,16 @@ class WanT2V:
 
             arg_c = {'context': context, 'seq_len': seq_len}
             arg_null = {'context': context_null, 'seq_len': seq_len}
+            
+            # import gc
+            # del self.text_encoder
+            # del self.vae
+            # gc.collect()  # 立即触发垃圾回收
+            # torch.cuda.empty_cache()  # 清空CUDA缓存
+            # torch.cuda.reset_peak_memory_stats()
+            
+            # start_mem = torch.cuda.memory_allocated()
+            #print(f"该阶段开始时显存占用：{start_mem / 1024**3:.2f} GB") 
 
             for _, t in enumerate(tqdm(timesteps)):
                 latent_model_input = latents
@@ -252,6 +281,9 @@ class WanT2V:
                     return_dict=False,
                     generator=seed_g)[0]
                 latents = [temp_x0.squeeze(0)]
+                
+            # peak_mem_bytes = torch.cuda.max_memory_allocated()
+            # print(f"该阶段最大显存占用：{peak_mem_bytes / 1024**3:.2f} GB")
 
             x0 = latents
             if offload_model:
