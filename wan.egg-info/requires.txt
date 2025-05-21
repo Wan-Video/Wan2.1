@@ -9,11 +9,16 @@ tqdm
 imageio
 easydict
 ftfy
-fastapi>=0.115.2
 dashscope
 imageio-ffmpeg
-#flash_attn
+flash_attn
 gradio>=5.0.0
-numpy>=1.23.5,<2
+numpy<2,>=1.23.5
 
-
+[dev]
+pytest
+black
+flake8
+isort
+mypy
+huggingface-hub[cli]

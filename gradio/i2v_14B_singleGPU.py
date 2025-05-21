@@ -285,4 +285,4 @@ if __name__ == '__main__':
     print("done", flush=True)
 
     demo = gradio_interface()
-    demo.launch(server_name="0.0.0.0", share=False, server_port=7860)
+    demo.launch(server_name="127.0.0.1", share=False, server_port=7860)
