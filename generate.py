@@ -243,6 +243,12 @@ def _parse_args():
         type=float,
         default=5.0,
         help="Classifier free guidance scale.")
+    parser.add_argument(
+        "--output_format",
+        type=str,
+        default="mp4",
+        choices=["mp4", "gif"],
+        help="The output format for the generated video. Supported formats are mp4 (default) and gif.")
 
     args = parser.parse_args()
 
@@ -559,7 +565,7 @@ def generate(args):
             formatted_time = datetime.now().strftime("%Y%m%d_%H%M%S")
             formatted_prompt = args.prompt.replace(" ", "_").replace("/",
                                                                      "_")[:50]
-            suffix = '.png' if "t2i" in args.task else '.mp4'
+            suffix = '.png' if "t2i" in args.task else f'.{args.output_format}'
             args.save_file = f"{args.task}_{args.size.replace('*','x') if sys.platform=='win32' else args.size}_{args.ulysses_size}_{args.ring_size}_{formatted_prompt}_{formatted_time}" + suffix
 
         if "t2i" in args.task:
@@ -572,13 +578,21 @@ def generate(args):
                 value_range=(-1, 1))
         else:
             logging.info(f"Saving generated video to {args.save_file}")
-            cache_video(
-                tensor=video[None],
-                save_file=args.save_file,
-                fps=cfg.sample_fps,
-                nrow=1,
-                normalize=True,
-                value_range=(-1, 1))
+            if args.output_format == "gif":
+                import imageio
+                # Convert tensor to numpy array and then to list of frames
+                video_np = video.squeeze(0).permute(1, 2, 3, 0).cpu().numpy()
+                video_np = (video_np * 255).astype('uint8')
+                frames = [frame for frame in video_np]
+                imageio.mimsave(args.save_file, frames, fps=cfg.sample_fps)
+            else:  # mp4
+                cache_video(
+                    tensor=video[None],
+                    save_file=args.save_file,
+                    fps=cfg.sample_fps,
+                    nrow=1,
+                    normalize=True,
+                    value_range=(-1, 1))
     logging.info("Finished.")
 
 
