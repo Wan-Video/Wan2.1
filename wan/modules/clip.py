@@ -6,11 +6,19 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.cuda.amp as amp
 import torchvision.transforms as T
 
 from .attention import flash_attention
 from .tokenizers import HuggingfaceTokenizer
 from .xlm_roberta import XLMRoberta
+
+try:
+    import torch_musa
+    import torch_musa.core.amp as amp
+    from .attention import attention as flash_attention
+except ModuleNotFoundError:
+    torch_musa = None
 
 __all__ = [
     'XLMRobertaCLIP',
@@ -82,7 +90,10 @@ class SelfAttention(nn.Module):
 
         # compute attention
         p = self.attn_dropout if self.training else 0.0
-        x = flash_attention(q, k, v, dropout_p=p, causal=self.causal, version=2)
+        if torch_musa is not None:
+            x = flash_attention(q, k, v, dropout_p=p, causal=self.causal)
+        else:
+            x = flash_attention(q, k, v, dropout_p=p, causal=self.causal, version=2)
         x = x.reshape(b, s, c)
 
         # output
@@ -194,7 +205,10 @@ class AttentionPool(nn.Module):
         k, v = self.to_kv(x).view(b, s, 2, n, d).unbind(2)
 
         # compute attention
-        x = flash_attention(q, k, v, version=2)
+        if torch_musa is not None:
+            x = flash_attention(q, k, v)
+        else:
+            x = flash_attention(q, k, v, version=2)
         x = x.reshape(b, 1, c)
 
         # output
@@ -537,6 +551,6 @@ class CLIPModel:
         videos = self.transforms.transforms[-1](videos.mul_(0.5).add_(0.5))
 
         # forward
-        with torch.cuda.amp.autocast(dtype=self.dtype):
+        with amp.autocast(dtype=self.dtype):
             out = self.model.visual(videos, use_31_block=True)
             return out

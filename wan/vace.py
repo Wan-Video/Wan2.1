@@ -13,12 +13,21 @@ from functools import partial
 
 import torch
 import torch.cuda.amp as amp
+from torch.cuda import empty_cache, synchronize
 import torch.distributed as dist
 import torch.multiprocessing as mp
 import torch.nn.functional as F
 import torchvision.transforms.functional as TF
 from PIL import Image
 from tqdm import tqdm
+
+try:
+    import torch_musa
+    import torch_musa.core.amp as amp
+    from torch_musa.core.memory import empty_cache
+    from torch_musa.core.device import synchronize
+except ModuleNotFoundError:
+    torch_musa = None
 
 from .modules.vace_model import VaceWanModel
 from .text2video import (
@@ -32,6 +41,7 @@ from .text2video import (
     shard_model,
 )
 from .utils.vace_processor import VaceVideoProcessor
+from .utils.platform import get_device, get_torch_distributed_backend
 
 
 class WanVace(WanT2V):
@@ -68,7 +78,7 @@ class WanVace(WanT2V):
             t5_cpu (`bool`, *optional*, defaults to False):
                 Whether to place T5 model on CPU. Only works without t5_fsdp.
         """
-        self.device = torch.device(f"cuda:{device_id}")
+        self.device = get_device(device_id)
         self.config = config
         self.rank = rank
         self.t5_cpu = t5_cpu
@@ -460,7 +470,7 @@ class WanVace(WanT2V):
             x0 = latents
             if offload_model:
                 self.model.cpu()
-                torch.cuda.empty_cache()
+                empty_cache()
             if self.rank == 0:
                 videos = self.decode_latent(x0, input_ref_images)
 
@@ -468,7 +478,7 @@ class WanVace(WanT2V):
         del sample_scheduler
         if offload_model:
             gc.collect()
-            torch.cuda.synchronize()
+            synchronize()
         if dist.is_initialized():
             dist.barrier()
 
@@ -568,7 +578,7 @@ class WanVaceMP(WanVace):
 
             torch.cuda.set_device(gpu)
             dist.init_process_group(
-                backend='nccl',
+                backend=get_torch_distributed_backend(),
                 init_method='env://',
                 rank=rank,
                 world_size=world_size)
@@ -633,7 +643,7 @@ class WanVaceMP(WanVace):
             model = shard_fn(model)
             sample_neg_prompt = self.config.sample_neg_prompt
 
-            torch.cuda.empty_cache()
+            empty_cache()
             event = initialized_events[gpu]
             in_q = in_q_list[gpu]
             event.set()
@@ -748,7 +758,7 @@ class WanVaceMP(WanVace):
                             generator=seed_g)[0]
                         latents = [temp_x0.squeeze(0)]
 
-                    torch.cuda.empty_cache()
+                    empty_cache()
                     x0 = latents
                     if rank == 0:
                         videos = self.decode_latent(
@@ -758,7 +768,7 @@ class WanVaceMP(WanVace):
                 del sample_scheduler
                 if offload_model:
                     gc.collect()
-                    torch.cuda.synchronize()
+                    synchronize()
                 if dist.is_initialized():
                     dist.barrier()
 

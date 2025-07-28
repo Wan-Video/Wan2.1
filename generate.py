@@ -12,12 +12,20 @@ import random
 
 import torch
 import torch.distributed as dist
+from torch.cuda import set_device
 from PIL import Image
+
+try:
+    import torch_musa
+    from torch_musa.core.device import set_device
+except ModuleNotFoundError:
+    torch_musa = None
 
 import wan
 from wan.configs import MAX_AREA_CONFIGS, SIZE_CONFIGS, SUPPORTED_SIZES, WAN_CONFIGS
 from wan.utils.prompt_extend import DashScopePromptExpander, QwenPromptExpander
 from wan.utils.utils import cache_image, cache_video, str2bool
+from wan.utils.platform import get_torch_distributed_backend
 
 
 EXAMPLE_PROMPT = {
@@ -275,9 +283,9 @@ def generate(args):
         logging.info(
             f"offload_model is not specified, set to {args.offload_model}.")
     if world_size > 1:
-        torch.cuda.set_device(local_rank)
+        set_device(local_rank)
         dist.init_process_group(
-            backend="nccl",
+            backend=get_torch_distributed_backend(),
             init_method="env://",
             rank=rank,
             world_size=world_size)

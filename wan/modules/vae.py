@@ -5,7 +5,16 @@ import torch
 import torch.cuda.amp as amp
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.nn import Upsample
 from einops import rearrange
+
+try:
+    import torch_musa
+    import torch_musa.core.amp as amp
+except ModuleNotFoundError:
+    torch_musa = None
+
+from wan.utils.platform import get_device
 
 __all__ = [
     'WanVAE',
@@ -622,7 +631,7 @@ class WanVAE:
                  z_dim=16,
                  vae_pth='cache/vae_step_411000.pth',
                  dtype=torch.float,
-                 device="cuda"):
+                 device=get_device()):
         self.dtype = dtype
         self.device = device
 

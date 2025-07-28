@@ -7,7 +7,14 @@ import torch.nn as nn
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.models.modeling_utils import ModelMixin
 
-from .attention import flash_attention
+from wan.modules.attention import flash_attention
+
+try:
+    import torch_musa
+    import torch_musa.core.amp as amp
+    from wan.modules.attention import attention as flash_attention
+except ModuleNotFoundError:
+    torch_musa = None
 
 __all__ = ['WanModel']
 
@@ -19,7 +26,7 @@ def sinusoidal_embedding_1d(dim, position):
     # preprocess
     assert dim % 2 == 0
     half = dim // 2
-    position = position.type(torch.float64)
+    position = position.type(torch.float32)
 
     # calculation
     sinusoid = torch.outer(
@@ -37,6 +44,36 @@ def rope_params(max_seq_len, dim, theta=10000):
                         torch.arange(0, dim, 2).to(torch.float64).div(dim)))
     freqs = torch.polar(torch.ones_like(freqs), freqs)
     return freqs
+
+
+@amp.autocast(enabled=False)
+def rope_params_real(
+    max_seq_len, dim, theta=10000, dtype=torch.float32, device=torch.device("cpu")
+):
+    assert dim % 2 == 0
+    freqs_real = torch.outer(
+        torch.arange(max_seq_len, dtype=dtype, device=device),
+        1.0
+        / torch.pow(
+            theta, torch.arange(0, dim, 2, dtype=dtype, device=device).div(dim)
+        ),
+    )
+    return torch.cos(freqs_real)
+
+
+@amp.autocast(enabled=False)
+def rope_params_imag(
+    max_seq_len, dim, theta=10000, dtype=torch.float32, device=torch.device("cpu")
+):
+    assert dim % 2 == 0
+    freqs_imag = torch.outer(
+        torch.arange(max_seq_len, dtype=dtype, device=device),
+        1.0
+        / torch.pow(
+            theta, torch.arange(0, dim, 2, dtype=dtype, device=device).div(dim)
+        ),
+    )
+    return torch.sin(freqs_imag)
 
 
 @amp.autocast(enabled=False)
@@ -68,6 +105,55 @@ def rope_apply(x, grid_sizes, freqs):
         # append to collection
         output.append(x_i)
     return torch.stack(output).float()
+
+
+@amp.autocast(enabled=False)
+def rope_apply_musa(x, grid_sizes, freqs):
+    n, c = x.size(2), x.size(3) // 2
+    c0 = c - 2 * (c // 3)
+    c1 = c // 3
+    c2 = c // 3
+
+    # split freqs
+    freqs_real = freqs[0].split([c0, c1, c2], dim=1)
+    freqs_imag = freqs[-1].split([c0, c1, c2], dim=1)
+
+    # loop over samples
+    output = []
+    for i, (f, h, w) in enumerate(grid_sizes.tolist()):
+        seq_len = f * h * w
+
+        # precompute multipliers
+        x_i = x[i, :seq_len].reshape(seq_len, n, c, 2)
+        x_real = x_i[..., 0]
+        x_imag = x_i[..., 1]
+        freqs_real = torch.cat(
+            [
+                freqs_real[0][:f].view(f, 1, 1, c0).expand(f, h, w, c0),
+                freqs_real[1][:h].view(1, h, 1, c1).expand(f, h, w, c1),
+                freqs_real[2][:w].view(1, 1, w, c2).expand(f, h, w, c2),
+            ],
+            dim=-1,
+        ).reshape(seq_len, 1, c)
+        freqs_imag = torch.cat(
+            [
+                freqs_imag[0][:f].view(f, 1, 1, c0).expand(f, h, w, c0),
+                freqs_imag[1][:h].view(1, h, 1, c1).expand(f, h, w, c1),
+                freqs_imag[2][:w].view(1, 1, w, c2).expand(f, h, w, c2),
+            ],
+            dim=-1,
+        ).reshape(seq_len, 1, c)
+
+        out_real = x_real * freqs_real - x_imag * freqs_imag
+        out_imag = x_real * freqs_imag + x_imag * freqs_real
+
+        # apply rotary embedding
+        x_out = torch.stack([out_real, out_imag], dim=-1).flatten(2)
+        x_out = torch.cat([x_out, x[i, seq_len:]], dim=0)
+
+        # append to collection
+        output.append(x_out)
+    return torch.stack(output)
 
 
 class WanRMSNorm(nn.Module):
@@ -146,12 +232,22 @@ class WanSelfAttention(nn.Module):
 
         q, k, v = qkv_fn(x)
 
-        x = flash_attention(
-            q=rope_apply(q, grid_sizes, freqs),
-            k=rope_apply(k, grid_sizes, freqs),
-            v=v,
-            k_lens=seq_lens,
-            window_size=self.window_size)
+        if torch_musa is not None:
+            x = flash_attention(
+                q=rope_apply_musa(q, grid_sizes, freqs),
+                k=rope_apply_musa(k, grid_sizes, freqs),
+                v=v,
+                k_lens=seq_lens,
+                window_size=self.window_size,
+            )
+        else:
+            x = flash_attention(
+                q=rope_apply(q, grid_sizes, freqs),
+                k=rope_apply(k, grid_sizes, freqs),
+                v=v,
+                k_lens=seq_lens,
+                window_size=self.window_size,
+            )
 
         # output
         x = x.flatten(2)
@@ -477,12 +573,33 @@ class WanModel(ModelMixin, ConfigMixin):
         # buffers (don't use register_buffer otherwise dtype will be changed in to())
         assert (dim % num_heads) == 0 and (dim // num_heads) % 2 == 0
         d = dim // num_heads
-        self.freqs = torch.cat([
-            rope_params(1024, d - 4 * (d // 6)),
-            rope_params(1024, 2 * (d // 6)),
-            rope_params(1024, 2 * (d // 6))
-        ],
-                               dim=1)
+        if torch_musa is not None:
+            freqs_real = torch.cat(
+                [
+                    rope_params_real(1024, d - 4 * (d // 6)),
+                    rope_params_real(1024, 2 * (d // 6)),
+                    rope_params_real(1024, 2 * (d // 6)),
+                ],
+                dim=1,
+            )
+            freqs_imag = torch.cat(
+                [
+                    rope_params_imag(1024, d - 4 * (d // 6)),
+                    rope_params_imag(1024, 2 * (d // 6)),
+                    rope_params_imag(1024, 2 * (d // 6)),
+                ],
+                dim=1,
+            )
+            self.freqs = (freqs_real, freqs_imag)
+        else:
+            self.freqs = torch.cat(
+                [
+                    rope_params(1024, d - 4 * (d // 6)),
+                    rope_params(1024, 2 * (d // 6)),
+                    rope_params(1024, 2 * (d // 6)),
+                ],
+                dim=1,
+            )
 
         if model_type == 'i2v' or model_type == 'flf2v':
             self.img_emb = MLPProj(1280, dim, flf_pos_emb=model_type == 'flf2v')
@@ -523,9 +640,17 @@ class WanModel(ModelMixin, ConfigMixin):
         if self.model_type == 'i2v' or self.model_type == 'flf2v':
             assert clip_fea is not None and y is not None
         # params
+        dtype = self.patch_embedding.weight.dtype
         device = self.patch_embedding.weight.device
-        if self.freqs.device != device:
-            self.freqs = self.freqs.to(device)
+        if torch_musa is not None:
+            if self.freqs[0].dtype != dtype or self.freqs[0].device != device:
+                self.freqs = (
+                    self.freqs[0].to(dtype=dtype, device=device),
+                    self.freqs[-1].to(dtype=dtype, device=device)
+                )
+        else:
+            if self.freqs.dtype != dtype or self.freqs.device != device:
+                self.freqs = self.freqs.to(dtype=dtype, device=device)
 
         if y is not None:
             x = [torch.cat([u, v], dim=0) for u, v in zip(x, y)]
