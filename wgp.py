@@ -888,6 +888,29 @@ def update_task_thumbnails(task,  inputs):
         "end_image_data_base64": [pil_to_base64_uri(img, format="jpeg", quality=70) for img in end_image_data] if end_image_data != None else None
     })
 
+def move_task(queue, old_index_str, new_index_str):
+    try:
+        old_idx = int(old_index_str)
+        new_idx = int(new_index_str)
+    except (ValueError, IndexError):
+        return update_queue_data(queue)
+
+    with lock:
+        old_idx += 1
+        new_idx += 1
+
+        if not (0 < old_idx < len(queue)):
+            return update_queue_data(queue)
+
+        item_to_move = queue.pop(old_idx)
+        if old_idx < new_idx:
+            new_idx -= 1
+        clamped_new_idx = max(1, min(new_idx, len(queue)))
+        
+        queue.insert(clamped_new_idx, item_to_move)
+
+    return update_queue_data(queue)
+
 def move_up(queue, selected_indices):
     if not selected_indices or len(selected_indices) == 0:
         return update_queue_data(queue)
@@ -1462,14 +1485,13 @@ def generate_queue_html(queue):
     <table>
         <thead>
             <tr>
+                <th style="width:4%;" class="center-align" title="Drag to reorder">Drag</th>
                 <th style="width:5%;" class="center-align">Qty</th>
                 <th style="width:auto;" class="text-left">Prompt</th>
                 <th style="width:7%;" class="center-align">Length</th>
                 <th style="width:7%;" class="center-align">Steps</th>
                 <th style="width:10%;" class="center-align">Start/Ref</th>
                 <th style="width:10%;" class="center-align">End</th>
-                <th style="width:4%;" class="center-align" title="Move Up"></th>
-                <th style="width:4%;" class="center-align" title="Move Down"></th>
                 <th style="width:4%;" class="center-align" title="Edit"></th>
                 <th style="width:4%;" class="center-align" title="Remove"></th>
             </tr>
@@ -1505,22 +1527,20 @@ def generate_queue_html(queue):
         end_img_md = ""
         if end_img_uri:
             end_img_md = f'<div class="hover-image" onclick="showImageModal(\'end_{row_index}\')"><img src="{end_img_uri}" alt="{end_img_labels[0]}" /></div>'
-        
-        up_btn = f"""<button onclick="updateAndTrigger('up_{row_index}')" class="action-button" title="Move Up">↑</button>"""
-        down_btn = f"""<button onclick="updateAndTrigger('down_{row_index}')" class="action-button" title="Move Down">↓</button>"""
+
+        drag_handle = f'<td draggable="true" class="drag-handle center-align" title="Drag to reorder">☰</td>'
         edit_btn = f"""<button onclick="updateAndTrigger('edit_{row_index}')" class="action-button" title="Edit">✏️</button>"""
         remove_btn = f"""<button onclick="updateAndTrigger('remove_{row_index}')" class="action-button" title="Remove">✖️</button>"""
 
         row_html = f"""
-        <tr>
+        <tr class="draggable-row" data-index="{row_index}">
+            {drag_handle}
             <td class="center-align">{item.get('repeats', "1")}</td>
             <td>{prompt_cell}</td>
             <td class="center-align">{length}</td>
             <td class="center-align">{num_steps}</td>
             <td class="center-align">{start_img_md}</td>
             <td class="center-align">{end_img_md}</td>
-            <td class="center-align">{up_btn}</td>
-            <td class="center-align">{down_btn}</td>
             <td class="center-align">{edit_btn}</td>
             <td class="center-align">{remove_btn}</td>
         </tr>
@@ -6954,12 +6974,14 @@ def handle_queue_action(state, action_string):
     queue = gen.get("queue", [])
     
     try:
-        action, row_index_str = action_string.split('_')
-        row_index = int(row_index_str)
+        parts = action_string.split('_')
+        action = parts[0]
+        params = parts[1:]
     except (IndexError, ValueError):
         return gr.HTML(), gr.Tabs()
 
     if action == "edit":
+        row_index = int(params[0])
         state["editing_task_index"] = row_index
         task_to_edit_index = row_index + 1
         
@@ -6971,11 +6993,12 @@ def handle_queue_action(state, action_string):
             gr.Warning("Task index out of bounds.")
             return update_queue_data(queue), gr.Tabs()
             
-    elif action == "up":
-        return move_up(queue, [row_index]), gr.Tabs()
-    elif action == "down":
-        return move_down(queue, [row_index]), gr.Tabs()
+    elif action == "move" and len(params) == 3 and params[1] == "to":
+        old_index_str, new_index_str = params[0], params[2]
+        return move_task(queue, old_index_str, new_index_str), gr.Tabs()
+        
     elif action == "remove":
+        row_index = int(params[0])
         new_queue_data = remove_task(queue, [row_index])
         gen["prompts_max"] = gen.get("prompts_max", 0) - 1
         update_status(state)
@@ -9582,6 +9605,20 @@ def create_ui():
             display: block;
             margin: auto;
         }
+        #queue_html_container .drag-handle {
+            cursor: grab;
+            user-select: none;
+        }
+        #queue_html_container tr.dragging {
+            opacity: 0.5;
+            background: #2d3748;
+        }
+        #queue_html_container tr.drag-over-top {
+            border-top: 2px solid #4299e1;
+        }
+        #queue_html_container tr.drag-over-bottom {
+            border-bottom: 2px solid #4299e1;
+        }
         #image-modal-container {
             position: fixed;
             top: 0;
@@ -9770,6 +9807,116 @@ def create_ui():
                 modal.style.display = 'none';
             }
         };
+
+        let draggedItem = null;
+
+        function initializeQueueDragAndDrop() {
+            const queueTbody = document.querySelector('#queue_html_container table > tbody');
+            if (!queueTbody || queueTbody.dataset.dndInitialized) {
+                return;
+            }
+            
+            queueTbody.dataset.dndInitialized = 'true';
+
+            queueTbody.addEventListener('dragstart', (e) => {
+                if (e.target.classList.contains('drag-handle')) {
+                    draggedItem = e.target.closest('.draggable-row');
+                    if (draggedItem) {
+                        setTimeout(() => {
+                            draggedItem.classList.add('dragging');
+                        }, 0);
+                    }
+                }
+            });
+
+            queueTbody.addEventListener('dragend', (e) => {
+                if (draggedItem) {
+                    draggedItem.classList.remove('dragging');
+                    draggedItem = null;
+                    document.querySelectorAll('.drag-over-top, .drag-over-bottom').forEach(el => {
+                        el.classList.remove('drag-over-top', 'drag-over-bottom');
+                    });
+                }
+            });
+
+            queueTbody.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                const targetRow = e.target.closest('.draggable-row');
+                
+                // Clear previous indicators
+                document.querySelectorAll('.drag-over-top, .drag-over-bottom').forEach(el => {
+                    el.classList.remove('drag-over-top', 'drag-over-bottom');
+                });
+
+                if (targetRow && draggedItem && targetRow !== draggedItem) {
+                    const rect = targetRow.getBoundingClientRect();
+                    const midpoint = rect.top + rect.height / 2;
+                    
+                    if (e.clientY < midpoint) {
+                        targetRow.classList.add('drag-over-top');
+                    } else {
+                        targetRow.classList.add('drag-over-bottom');
+                    }
+                }
+            });
+
+            queueTbody.addEventListener('dragleave', (e) => {
+                 const relatedTarget = e.relatedTarget;
+                 const queueTable = e.currentTarget.closest('table');
+                 if (queueTable && !queueTable.contains(relatedTarget)) {
+                    document.querySelectorAll('.drag-over-top, .drag-over-bottom').forEach(el => {
+                        el.classList.remove('drag-over-top', 'drag-over-bottom');
+                    });
+                 }
+            });
+
+            queueTbody.addEventListener('drop', (e) => {
+                e.preventDefault();
+                const targetRow = e.target.closest('.draggable-row');
+
+                if (draggedItem && targetRow && targetRow !== draggedItem) {
+                    const oldIndex = draggedItem.dataset.index;
+                    let newIndex = parseInt(targetRow.dataset.index);
+
+                    // If dropping on the bottom half, the new index is after the target row
+                    if (targetRow.classList.contains('drag-over-bottom')) {
+                        newIndex++;
+                    }
+
+                    if (oldIndex != newIndex) {
+                       const action = `move_${oldIndex}_to_${newIndex}`;
+                       window.updateAndTrigger(action);
+                    }
+                }
+
+                // Cleanup visual styles
+                document.querySelectorAll('.drag-over-top, .drag-over-bottom').forEach(el => {
+                    el.classList.remove('drag-over-top', 'drag-over-bottom');
+                });
+                if (draggedItem) {
+                    draggedItem.classList.remove('dragging');
+                    draggedItem = null;
+                }
+            });
+        }
+        
+        const observer = new MutationObserver((mutationsList, observer) => {
+            for(const mutation of mutationsList) {
+                if (mutation.type === 'childList') {
+                    const queueContainer = document.querySelector('#queue_html_container');
+                    if (queueContainer && queueContainer.querySelector('table > tbody')) {
+                        initializeQueueDragAndDrop();
+                    }
+                }
+            }
+        });
+
+        const targetNode = document.querySelector('gradio-app');
+        if (targetNode) {
+            observer.observe(targetNode, { childList: true, subtree: true });
+        }
+        
+        setTimeout(initializeQueueDragAndDrop, 500);
 
         // cancel wheel usage inside image editor    
         const hit = n => n?.id === "img_editor" || n?.classList?.contains("wheel-pass");
