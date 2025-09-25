@@ -173,8 +173,14 @@ class family_handler():
                     video_prompt_type = video_prompt_type.replace("M","")
                     ui_defaults["video_prompt_type"] = video_prompt_type  
 
+        if settings_version < 2.36:
+            if base_model_type in ["hunyuan_avatar", "hunyuan_custom_audio"]:
+                audio_prompt_type=  ui_defaults["audio_prompt_type"]
+                if "A" not in audio_prompt_type:
+                    audio_prompt_type += "A"
+                    ui_defaults["audio_prompt_type"] = audio_prompt_type  
+
         
-        pass
     
     @staticmethod
     def update_default_settings(base_model_type, model_def, ui_defaults):
@@ -197,6 +203,7 @@ class family_handler():
                 "guidance_scale": 7.5,
                 "flow_shift": 13,
                 "video_prompt_type": "I",
+                "audio_prompt_type": "A",
             })
         elif base_model_type in ["hunyuan_custom_edit"]:
             ui_defaults.update({
@@ -213,4 +220,5 @@ class family_handler():
                 "skip_steps_start_step_perc": 25, 
                 "video_length": 129,
                 "video_prompt_type": "KI",
+                "audio_prompt_type": "A",
             })

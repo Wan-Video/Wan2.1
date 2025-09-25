@@ -28,7 +28,7 @@ class family_handler():
             extra_model_def["any_image_refs_relative_size"] = True
             extra_model_def["no_background_removal"] = True
             extra_model_def["image_ref_choices"] = {
-                "choices":[("No Reference Image", ""),("First Image is a Reference Image, and then the next ones (up to two) are Style Images", "KI"),
+                "choices":[("First Image is a Reference Image, and then the next ones (up to two) are Style Images", "KI"),
                             ("Up to two Images are Style Images", "KIJ")],
                 "default": "KI",
                 "letters_filter": "KIJ",

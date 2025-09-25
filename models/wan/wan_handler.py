@@ -245,8 +245,10 @@ class family_handler():
                     "visible" : False,
                 }
 
-        if vace_class or base_model_type in ["infinitetalk", "animate"]:
+        if vace_class or base_model_type in ["animate"]:
             image_prompt_types_allowed = "TVL"
+        elif base_model_type in ["infinitetalk"]:
+            image_prompt_types_allowed = "TSVL"
         elif base_model_type in ["ti2v_2_2"]:
             image_prompt_types_allowed = "TSVL"
         elif base_model_type in ["lucy_edit"]:

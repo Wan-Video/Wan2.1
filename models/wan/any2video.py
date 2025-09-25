@@ -443,38 +443,32 @@ class WanAny2V:
         # image2video 
         if model_type in ["i2v", "i2v_2_2", "fun_inp_1.3B", "fun_inp", "fantasy", "multitalk", "infinitetalk", "i2v_2_2_multitalk", "flf2v_720p"]:
             any_end_frame = False
-            if image_start is None:
-                if infinitetalk:
-                    new_shot = "Q" in video_prompt_type
-                    if input_frames is not None:
-                        image_ref = input_frames[:, 0]
-                    else:
-                        if input_ref_images is None:                        
-                            if pre_video_frame is None: raise Exception("Missing Reference Image")
-                            input_ref_images, new_shot = [pre_video_frame], False
-                        new_shot = new_shot and window_no <= len(input_ref_images)
-                        image_ref = convert_image_to_tensor(input_ref_images[ min(window_no, len(input_ref_images))-1 ])
-                    if new_shot or input_video is None:  
-                        input_video = image_ref.unsqueeze(1)
-                    else:
-                        color_correction_strength = 0 #disable color correction as transition frames between shots may have a complete different color level than the colors of the new shot
-                _ , preframes_count, height, width = input_video.shape
-                input_video = input_video.to(device=self.device).to(dtype= self.VAE_dtype)
-                if infinitetalk:
-                    image_start = image_ref.to(input_video)
-                    control_pre_frames_count = 1 
-                    control_video = image_start.unsqueeze(1)
+            if infinitetalk:
+                new_shot = "Q" in video_prompt_type
+                if input_frames is not None:
+                    image_ref = input_frames[:, 0]
                 else:
-                    image_start = input_video[:, -1]
-                    control_pre_frames_count = preframes_count
-                    control_video = input_video
-
-                color_reference_frame = image_start.unsqueeze(1).clone()
+                    if input_ref_images is None:                        
+                        if pre_video_frame is None: raise Exception("Missing Reference Image")
+                        input_ref_images, new_shot = [pre_video_frame], False
+                    new_shot = new_shot and window_no <= len(input_ref_images)
+                    image_ref = convert_image_to_tensor(input_ref_images[ min(window_no, len(input_ref_images))-1 ])
+                if new_shot or input_video is None:  
+                    input_video = image_ref.unsqueeze(1)
+                else:
+                    color_correction_strength = 0 #disable color correction as transition frames between shots may have a complete different color level than the colors of the new shot
+            _ , preframes_count, height, width = input_video.shape
+            input_video = input_video.to(device=self.device).to(dtype= self.VAE_dtype)
+            if infinitetalk:
+                image_start = image_ref.to(input_video)
+                control_pre_frames_count = 1 
+                control_video = image_start.unsqueeze(1)
             else:
-                preframes_count = control_pre_frames_count = 1                
-                height, width = image_start.shape[1:]
-                control_video = image_start.unsqueeze(1).to(self.device)
-                color_reference_frame = control_video.clone()
+                image_start = input_video[:, -1]
+                control_pre_frames_count = preframes_count
+                control_video = input_video
+
+            color_reference_frame = image_start.unsqueeze(1).clone()
 
             any_end_frame = image_end is not None 
             add_frames_for_end_image = any_end_frame and model_type == "i2v"

@@ -52,7 +52,7 @@ matplotlib
 # Utilities
 ftfy
 piexif
-pynvml
+nvidia-ml-py 
 misaki
 
 # Optional / commented out

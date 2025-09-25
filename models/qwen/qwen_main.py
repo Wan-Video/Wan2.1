@@ -51,10 +51,10 @@ class model_factory():
         transformer_filename = model_filename[0]
         processor = None
         tokenizer = None
-        if base_model_type == "qwen_image_edit_20B":
+        if base_model_type in ["qwen_image_edit_20B", "qwen_image_edit_plus_20B"]:
             processor = Qwen2VLProcessor.from_pretrained(os.path.join(checkpoint_dir,"Qwen2.5-VL-7B-Instruct"))
         tokenizer = AutoTokenizer.from_pretrained(os.path.join(checkpoint_dir,"Qwen2.5-VL-7B-Instruct"))
-
+        self.base_model_type = base_model_type
 
         base_config_file = "configs/qwen_image_20B.json" 
         with open(base_config_file, 'r', encoding='utf-8') as f:
@@ -173,7 +173,7 @@ class model_factory():
             self.vae.tile_latent_min_height  = VAE_tile_size[1] 
             self.vae.tile_latent_min_width  = VAE_tile_size[1]
 
-
+        qwen_edit_plus = self.base_model_type in ["qwen_image_edit_plus_20B"]
         self.vae.enable_slicing()
         # width, height = aspect_ratios["16:9"]
 
@@ -182,17 +182,19 @@ class model_factory():
 
         image_mask = None if input_masks is None else convert_tensor_to_image(input_masks, mask_levels= True) 
         if input_frames is not None:
-            input_ref_images = [convert_tensor_to_image(input_frames) ] 
-        elif input_ref_images is not None:
+            input_ref_images = [convert_tensor_to_image(input_frames) ] +  ([] if input_ref_images  is None else input_ref_images )
+
+        if input_ref_images is not None:
             # image stiching method
             stiched = input_ref_images[0]
             if "K" in video_prompt_type :
                 w, h = input_ref_images[0].size
                 height, width = calculate_new_dimensions(height, width, h, w, fit_into_canvas)
 
-            for new_img in input_ref_images[1:]:
-                stiched = stitch_images(stiched, new_img)
-            input_ref_images  = [stiched]
+            if not qwen_edit_plus:
+                for new_img in input_ref_images[1:]:
+                    stiched = stitch_images(stiched, new_img)
+                input_ref_images  = [stiched]
 
         image = self.pipeline(
             prompt=input_prompt,
@@ -212,7 +214,8 @@ class model_factory():
             generator=torch.Generator(device="cuda").manual_seed(seed),
             lora_inpaint = image_mask is not None and model_mode == 1,
             outpainting_dims = outpainting_dims,
-        )        
+            qwen_edit_plus = qwen_edit_plus,
+        )      
         if image is None: return None
         return image.transpose(0, 1)
 

@@ -1,0 +1,17 @@
+{
+    "model": {
+        "name": "Qwen Image Edit Plus 20B",
+        "architecture": "qwen_image_edit_plus_20B",
+        "description": "Qwen Image Edit Plus is a generative model that can generate very high quality images with long texts in it. Best results will be at 720p. This model is optimized to combine multiple Subjects & Objects.",
+        "URLs": [
+            "https://huggingface.co/DeepBeepMeep/Qwen_image/resolve/main/qwen_image_edit_plus_20B_quanto_bf16_int8.safetensors"
+        ],
+        "preload_URLs": "qwen_image_edit_20B",
+        "attention": {
+            "<89": "sdpa"
+        }
+    },
+    "prompt": "add a hat",
+    "resolution": "1024x1024",
+    "batch_size": 1
+}

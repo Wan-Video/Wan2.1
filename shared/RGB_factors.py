@@ -1,6 +1,6 @@
 # thanks Comfyui for the rgb factors (https://github.com/comfyanonymous/ComfyUI/blob/master/comfy/latent_formats.py)
 def get_rgb_factors(model_family, model_type = None): 
-    if model_family == "wan":
+    if model_family in ["wan", "qwen"]:
         if model_type =="ti2v_2_2":
             latent_channels = 48
             latent_dimensions = 3            
@@ -261,7 +261,7 @@ def get_rgb_factors(model_family, model_type = None):
             [ 0.0249, -0.0469, -0.1703]
         ]
 
-        latent_rgb_factors_bias = [ 0.0259, -0.0192, -0.0761]        
+        latent_rgb_factors_bias = [ 0.0259, -0.0192, -0.0761]
     else:
         latent_rgb_factors_bias = latent_rgb_factors = None
     return latent_rgb_factors, latent_rgb_factors_bias

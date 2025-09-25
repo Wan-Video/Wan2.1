@@ -20,7 +20,7 @@ class family_handler():
             "fit_into_canvas_image_refs": 0,
         }
 
-        if base_model_type in ["qwen_image_edit_20B"]: 
+        if base_model_type in ["qwen_image_edit_20B", "qwen_image_edit_plus_20B"]: 
             extra_model_def["inpaint_support"] = True
             extra_model_def["image_ref_choices"] = {
             "choices": [
@@ -42,11 +42,20 @@ class family_handler():
                         "image_modes" : [2],
             }
 
+        if base_model_type in ["qwen_image_edit_plus_20B"]: 
+            extra_model_def["guide_preprocessing"] = {
+                    "selection": ["", "PV", "SV", "CV"],
+                }
+
+            extra_model_def["mask_preprocessing"] = {
+                    "selection": ["", "A"],
+                    "visible": False,
+                }
         return extra_model_def
 
     @staticmethod
     def query_supported_types():
-        return ["qwen_image_20B", "qwen_image_edit_20B"]
+        return ["qwen_image_20B", "qwen_image_edit_20B", "qwen_image_edit_plus_20B"]
 
     @staticmethod
     def query_family_maps():
@@ -113,9 +122,16 @@ class family_handler():
                 "denoising_strength" : 1.,
                 "model_mode" : 0,
             })
+        elif base_model_type in ["qwen_image_edit_plus_20B"]: 
+            ui_defaults.update({
+                "video_prompt_type": "I",
+                "denoising_strength" : 1.,
+                "model_mode" : 0,
+            })
 
+    @staticmethod
     def validate_generative_settings(base_model_type, model_def, inputs):
-        if base_model_type in ["qwen_image_edit_20B"]:
+        if base_model_type in ["qwen_image_edit_20B", "qwen_image_edit_plus_20B"]:
             model_mode = inputs["model_mode"]
             denoising_strength= inputs["denoising_strength"]
             video_guide_outpainting= inputs["video_guide_outpainting"]
@@ -126,3 +142,9 @@ class family_handler():
                 gr.Info("Denoising Strength will be ignored while using Lora Inpainting")
             if outpainting_dims is not None and model_mode == 0 :
                 return "Outpainting is not supported with Masked Denoising  "
+            
+    @staticmethod
+    def get_rgb_factors(base_model_type ):
+        from shared.RGB_factors import get_rgb_factors
+        latent_rgb_factors, latent_rgb_factors_bias = get_rgb_factors("qwen")
+        return latent_rgb_factors, latent_rgb_factors_bias

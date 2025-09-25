@@ -321,7 +321,7 @@ def fit_image_into_canvas(ref_img, image_size, canvas_tf_bg =127.5, device ="cpu
     ref_width, ref_height = ref_img.size
     if (ref_height, ref_width) == image_size and outpainting_dims  == None:
         ref_img = TF.to_tensor(ref_img).sub_(0.5).div_(0.5).unsqueeze(1)
-        canvas = torch.zeros_like(ref_img) if return_mask else None
+        canvas = torch.zeros_like(ref_img[:1]) if return_mask else None
     else:
         if outpainting_dims != None:
             final_height, final_width = image_size
@@ -374,7 +374,7 @@ def prepare_video_guide_and_mask( video_guides, video_masks, pre_video_guide, im
         if pre_video_guide is not None:
             src_video = pre_video_guide if src_video is None else torch.cat( [pre_video_guide, src_video], dim=1)
             if any_mask:
-                src_mask = torch.zeros_like(pre_video_guide[0:1]) if src_mask is None else torch.cat( [torch.zeros_like(pre_video_guide[0:1]), src_mask], dim=1)
+                src_mask = torch.zeros_like(pre_video_guide[:1]) if src_mask is None else torch.cat( [torch.zeros_like(pre_video_guide[:1]), src_mask], dim=1)
 
         if any_guide_padding:
             if src_video is None:

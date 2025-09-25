@@ -21,6 +21,7 @@ from .utils.get_default_model import get_matanyone_model
 from .matanyone.inference.inference_core import InferenceCore
 from .matanyone_wrapper import matanyone
 from shared.utils.audio_video import save_video, save_image
+from mmgp import offload
 
 arg_device = "cuda"
 arg_sam_model_type="vit_h"
@@ -539,7 +540,7 @@ def video_matting(video_state,video_input, end_slider, matting_type, interactive
     file_name = ".".join(file_name.split(".")[:-1]) 
  
     from shared.utils.audio_video import extract_audio_tracks, combine_video_with_audio_tracks, cleanup_temp_audio_files    
-    source_audio_tracks, audio_metadata  = extract_audio_tracks(video_input)
+    source_audio_tracks, audio_metadata  = extract_audio_tracks(video_input, verbose= offload.default_verboseLevel )
     output_fg_path =  f"./mask_outputs/{file_name}_fg.mp4"
     output_fg_temp_path =  f"./mask_outputs/{file_name}_fg_tmp.mp4"
     if len(source_audio_tracks) == 0:
@@ -679,7 +680,6 @@ def load_unload_models(selected):
             }
             # os.path.join('.')
 
-            from mmgp import offload
 
             # sam_checkpoint = load_file_from_url(sam_checkpoint_url_dict[arg_sam_model_type], ".")
             sam_checkpoint = None
