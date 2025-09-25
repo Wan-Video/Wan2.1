@@ -911,38 +911,6 @@ def move_task(queue, old_index_str, new_index_str):
 
     return update_queue_data(queue)
 
-def move_up(queue, selected_indices):
-    if not selected_indices or len(selected_indices) == 0:
-        return update_queue_data(queue)
-    idx = selected_indices[0]
-    if isinstance(idx, list):
-        idx = idx[0]
-    idx = int(idx)
-    with lock:
-        idx += 1
-        if idx > 1:
-            queue[idx], queue[idx-1] = queue[idx-1], queue[idx]
-        elif idx == 1:
-            queue[:] = queue[0:1] + queue[2:] + queue[1:2]
-
-    return update_queue_data(queue)
-
-def move_down(queue, selected_indices):
-    if not selected_indices or len(selected_indices) == 0:
-        return update_queue_data(queue)
-    idx = selected_indices[0]
-    if isinstance(idx, list):
-        idx = idx[0]
-    idx = int(idx)
-    with lock:
-        idx += 1
-        if idx < len(queue)-1:
-            queue[idx], queue[idx+1] = queue[idx+1], queue[idx]
-        elif idx == len(queue)-1:
-            queue[:] = queue[0:1] + queue[-1:] + queue[1:-1]
-
-    return update_queue_data(queue)
-
 def remove_task(queue, selected_indices):
     if not selected_indices or len(selected_indices) == 0:
         return update_queue_data(queue)
