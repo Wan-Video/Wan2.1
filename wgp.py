@@ -338,8 +338,8 @@ def edit_task_in_queue(
     task_to_edit['params'] = original_params
     task_to_edit['prompt'] = new_inputs.get('prompt')
     task_to_edit['length'] = new_inputs.get('video_length')
-    task_to_edit['steps'] = new_inputs.get('num_inference_steps') 
-    update_task_thumbnails(task_to_edit, original_params)   
+    task_to_edit['steps'] = new_inputs.get('num_inference_steps')
+    update_task_thumbnails(task_to_edit, original_params)
     
     gr.Info(f"Task ID {task_to_edit['id']} has been updated successfully.")
     state["editing_task_index"] = None
@@ -1454,50 +1454,87 @@ def finalize_generation_with_state(current_state):
      accordion_update = gr.Accordion(open=False) if len(get_gen_info(current_state).get("queue", [])) <= 1 else gr.update()
      return gallery_update, abort_btn_update, gen_btn_update, add_queue_btn_update, current_gen_col_update, gen_info_update, accordion_update, current_state
 
-def get_queue_table(queue):
-    data = []
-    if len(queue) == 1:
-        return data 
+def generate_queue_html(queue):
+    if len(queue) <= 1:
+        return "<div style='text-align: center; color: grey; padding: 20px;'>Queue is empty.</div>"
 
+    table_header = """
+    <table>
+        <thead>
+            <tr>
+                <th style="width:5%;" class="center-align">Qty</th>
+                <th style="width:auto;" class="text-left">Prompt</th>
+                <th style="width:7%;" class="center-align">Length</th>
+                <th style="width:7%;" class="center-align">Steps</th>
+                <th style="width:10%;" class="center-align">Start/Ref</th>
+                <th style="width:10%;" class="center-align">End</th>
+                <th style="width:4%;" class="center-align" title="Move Up"></th>
+                <th style="width:4%;" class="center-align" title="Move Down"></th>
+                <th style="width:4%;" class="center-align" title="Edit"></th>
+                <th style="width:4%;" class="center-align" title="Remove"></th>
+            </tr>
+        </thead>
+        <tbody>
+    """
+    
+    table_rows = []
     for i, item in enumerate(queue):
-        if i==0:
+        if i == 0:
             continue
+        
+        row_index = i - 1
         truncated_prompt = (item['prompt'][:97] + '...') if len(item['prompt']) > 100 else item['prompt']
         full_prompt = item['prompt'].replace('"', '&quot;')
-        prompt_cell = f'<span title="{full_prompt}">{truncated_prompt}</span>'
-        start_img_uri =item.get('start_image_data_base64')
-        start_img_uri = start_img_uri[0] if start_img_uri !=None else None
-        start_img_labels =item.get('start_image_labels')
-        end_img_uri = item.get('end_image_data_base64')
-        end_img_uri = end_img_uri[0] if end_img_uri !=None else None
-        end_img_labels =item.get('end_image_labels')
-        thumbnail_size = "50px"
+        prompt_cell = f'<div class="prompt-cell" title="{full_prompt}">{truncated_prompt}</div>'
+        
+        start_img_data = item.get('start_image_data_base64') or [None]
+        start_img_uri = start_img_data[0]
+        start_img_labels = item.get('start_image_labels', [''])
+        
+        end_img_data = item.get('end_image_data_base64') or [None]
+        end_img_uri = end_img_data[0]
+        end_img_labels = item.get('end_image_labels', [''])
+        
         num_steps = item.get('steps')
         length = item.get('length')
+        
         start_img_md = ""
-        end_img_md = ""
         if start_img_uri:
-            start_img_md = f'<div class="hover-image"><img src="{start_img_uri}" alt="{start_img_labels[0]}" style="max-width:{thumbnail_size}; max-height:{thumbnail_size}; display: block; margin: auto; object-fit: contain;" /><span class="tooltip2">{start_img_labels[0]}</span></div>'
+            start_img_md = f'<div class="hover-image" onclick="showImageModal(\'start_{row_index}\')"><img src="{start_img_uri}" alt="{start_img_labels[0]}" /></div>'
+            
+        end_img_md = ""
         if end_img_uri:
-            end_img_md = f'<div class="hover-image"><img src="{end_img_uri}" alt="{end_img_labels[0]}" style="max-width:{thumbnail_size}; max-height:{thumbnail_size}; display: block; margin: auto; object-fit: contain;" /><span class="tooltip2">{end_img_labels[0]}</span></div>'
+            end_img_md = f'<div class="hover-image" onclick="showImageModal(\'end_{row_index}\')"><img src="{end_img_uri}" alt="{end_img_labels[0]}" /></div>'
+        
+        up_btn = f"""<button onclick="updateAndTrigger('up_{row_index}')" class="action-button" title="Move Up">↑</button>"""
+        down_btn = f"""<button onclick="updateAndTrigger('down_{row_index}')" class="action-button" title="Move Down">↓</button>"""
+        edit_btn = f"""<button onclick="updateAndTrigger('edit_{row_index}')" class="action-button" title="Edit">✏️</button>"""
+        remove_btn = f"""<button onclick="updateAndTrigger('remove_{row_index}')" class="action-button" title="Remove">✖️</button>"""
 
+        row_html = f"""
+        <tr>
+            <td class="center-align">{item.get('repeats', "1")}</td>
+            <td>{prompt_cell}</td>
+            <td class="center-align">{length}</td>
+            <td class="center-align">{num_steps}</td>
+            <td class="center-align">{start_img_md}</td>
+            <td class="center-align">{end_img_md}</td>
+            <td class="center-align">{up_btn}</td>
+            <td class="center-align">{down_btn}</td>
+            <td class="center-align">{edit_btn}</td>
+            <td class="center-align">{remove_btn}</td>
+        </tr>
+        """
+        table_rows.append(row_html)
+        
+    table_footer = "</tbody></table>"
+    
+    return table_header + "".join(table_rows) + table_footer
 
-        data.append([item.get('repeats', "1"),
-                    prompt_cell,
-                    length,
-                    num_steps,
-                    start_img_md,
-                    end_img_md,
-                    "↑",
-                    "↓",
-                    "✖"
-                    ])    
-    return data
 def update_queue_data(queue, first_time_in_queue =False):
     update_global_queue_ref(queue)
-    data = get_queue_table(queue)
-
-    return gr.DataFrame(value=data)
+    html_content = generate_queue_html(queue)
+    return gr.HTML(value=html_content)
 
 
 def create_html_progress_bar(percentage=0.0, text="Idle", is_idle=True):
@@ -5153,7 +5190,9 @@ def generate_video(
                         src_faces = torch.cat([src_faces, torch.full( (3, current_video_length - src_faces.shape[1], 512, 512 ), -1, dtype = src_faces.dtype, device= src_faces.device) ], dim=1)
 
                 # Sparse Video to Video
-                sparse_video_image = get_video_frame(video_guide, aligned_guide_start_frame, return_last_if_missing = True, target_fps = fps, return_PIL = True) if "R" in video_prompt_type else None
+                sparse_video_image = None
+                if "R" in video_prompt_type:
+                    sparse_video_image = get_video_frame(video_guide, aligned_guide_start_frame, return_last_if_missing = True, target_fps = fps, return_PIL = True)
 
                 # Generic Video Preprocessing
                 process_outside_mask = process_map_outside_mask.get(filter_letters(video_prompt_type, "YWX"), None)
@@ -6904,63 +6943,42 @@ def download_loras():
     return
 
 
-def handle_celll_selection(state, evt: gr.SelectData):
+def handle_queue_action(state, action_string):
+    if not action_string:
+        return gr.HTML(), gr.Tabs()
+        
     gen = get_gen_info(state)
     queue = gen.get("queue", [])
-
-    if evt.index is None:
-        return gr.update(), gr.update(), gr.update(visible=False), gr.update()
-    row_index, col_index = evt.index
     
-    if col_index == 1:
+    try:
+        action, row_index_str = action_string.split('_')
+        row_index = int(row_index_str)
+    except (IndexError, ValueError):
+        return gr.HTML(), gr.Tabs()
+
+    if action == "edit":
         state["editing_task_index"] = row_index
         task_to_edit_index = row_index + 1
         
         if task_to_edit_index < len(queue):
             task_data = queue[task_to_edit_index]
             gr.Info(f"Loading task '{task_data['prompt'][:50]}...' for editing.")
-            return gr.update(), gr.update(), gr.update(visible=False), gr.Tabs(selected="edit")
+            return update_queue_data(queue), gr.Tabs(selected="edit")
         else:
             gr.Warning("Task index out of bounds.")
-            return gr.update(), gr.update(), gr.update(visible=False), gr.update()
+            return update_queue_data(queue), gr.Tabs()
             
-    if col_index in [6, 7, 8]:
-        if col_index == 6: cell_value = "↑"
-        elif col_index == 7: cell_value = "↓"
-        elif col_index == 8: cell_value = "✖"
-        if col_index == 6:
-            new_df_data = move_up(queue, [row_index])
-            return new_df_data, gr.update(), gr.update(visible=False), gr.update()
-        elif col_index == 7:
-            new_df_data = move_down(queue, [row_index])
-            return new_df_data, gr.update(), gr.update(visible=False), gr.update()
-        elif col_index == 8:
-            new_df_data = remove_task(queue, [row_index])
-            gen["prompts_max"] = gen.get("prompts_max",0) - 1
-            update_status(state)
-            return new_df_data, gr.update(), gr.update(visible=False), gr.update()
-            
-    start_img_col_idx = 4
-    end_img_col_idx = 5
-    image_data_to_show = None
-    names = []
-    if col_index == start_img_col_idx:
-        with lock:
-            row_index += 1
-            if row_index < len(queue):
-                image_data_to_show = queue[row_index].get('start_image_data_base64')
-                names = queue[row_index].get('start_image_labels')
-    elif col_index == end_img_col_idx:
-        with lock:
-            row_index += 1
-            if row_index < len(queue):
-                image_data_to_show = queue[row_index].get('end_image_data_base64')
-                names = queue[row_index].get('end_image_labels')
-    if image_data_to_show:
-        value = get_modal_image( image_data_to_show[0], names[0])
-        return gr.update(), gr.update(value=value), gr.update(visible=True), gr.update()
-    else:
-        return gr.update(), gr.update(), gr.update(visible=False), gr.update()
+    elif action == "up":
+        return move_up(queue, [row_index]), gr.Tabs()
+    elif action == "down":
+        return move_down(queue, [row_index]), gr.Tabs()
+    elif action == "remove":
+        new_queue_data = remove_task(queue, [row_index])
+        gen["prompts_max"] = gen.get("prompts_max", 0) - 1
+        update_status(state)
+        return new_queue_data, gr.Tabs()
+
+    return update_queue_data(queue), gr.Tabs()
 
 def change_model(state, model_choice):
     if model_choice == None:
@@ -7185,6 +7203,40 @@ def init_process_queue_if_any(state):
 def get_modal_image(image_base64, label):
     return "<DIV ALIGN=CENTER><IMG SRC=\"" + image_base64 + "\"><div style='position: absolute; top: 0; left: 0; background: rgba(0,0,0,0.7); color: white; padding: 5px; font-size: 12px;'>" + label + "</div></DIV>"
 
+def show_modal_image(state, action_string):
+    if not action_string:
+        return gr.HTML(), gr.Column(visible=False)
+
+    try:
+        img_type, row_index_str = action_string.split('_')
+        row_index = int(row_index_str)
+    except (ValueError, IndexError):
+        return gr.HTML(), gr.Column(visible=False)
+
+    gen = get_gen_info(state)
+    queue = gen.get("queue", [])
+    task_index = row_index + 1
+
+    if task_index >= len(queue):
+        return gr.HTML(), gr.Column(visible=False)
+
+    task_item = queue[task_index]
+    image_data = None
+    label_data = None
+
+    if img_type == 'start':
+        image_data = task_item.get('start_image_data_base64')
+        label_data = task_item.get('start_image_labels')
+    elif img_type == 'end':
+        image_data = task_item.get('end_image_data_base64')
+        label_data = task_item.get('end_image_labels')
+
+    if not image_data or not label_data:
+        return gr.HTML(), gr.Column(visible=False)
+
+    html_content = get_modal_image(image_data[0], label_data[0])
+    return gr.HTML(value=html_content), gr.Column(visible=True)
+
 def get_prompt_labels(multi_prompts_gen_type, image_outputs = False):
     new_line_text = "each new line of prompt will be used for a window" if multi_prompts_gen_type != 0 else "each new line of prompt will generate " + ("a new image" if image_outputs else "a new video")
     return "Prompts (" + new_line_text + ", # lines = comments, ! lines = macros)", "Prompts (" + new_line_text + ", # lines = comments)"
@@ -7195,28 +7247,6 @@ def get_image_end_label(multi_prompts_gen_type):
 def refresh_prompt_labels(multi_prompts_gen_type, image_mode):
     prompt_label, wizard_prompt_label =  get_prompt_labels(multi_prompts_gen_type, image_mode > 0)
     return gr.update(label=prompt_label), gr.update(label = wizard_prompt_label), gr.update(label=get_image_end_label(multi_prompts_gen_type))
-
-def show_preview_column_modal(state, column_no):
-    column_no = int(column_no)
-    if column_no == -1:
-        return gr.update(), gr.update(), gr.update()
-    gen = get_gen_info(state)
-    queue = gen.get("queue", [])
-    task = queue[0]
-    list_uri = []
-    names = []
-    start_img_uri = task.get('start_image_data_base64')
-    if start_img_uri != None:
-        list_uri += start_img_uri
-        names += task.get('start_image_labels')
-    end_img_uri = task.get('end_image_data_base64')
-    if end_img_uri != None:
-        list_uri += end_img_uri
-        names += task.get('end_image_labels')
-
-    value = get_modal_image( list_uri[column_no],names[column_no]  )
-
-    return -1, gr.update(value=value), gr.update(visible=True)
 
 def update_video_guide_outpainting(video_guide_outpainting_value, value, pos):
     if len(video_guide_outpainting_value) <= 1:
@@ -7491,11 +7521,11 @@ def generate_video_tab(update_form = False, state_dict = None, ui_defaults = Non
     with gr.Row():
         with gr.Column():
             with gr.Column(visible=False, elem_id="image-modal-container") as modal_container: 
-                with gr.Row(elem_id="image-modal-close-button-row"): #
+                with gr.Row(elem_id="image-modal-close-button-row"):
                     close_modal_button = gr.Button("❌", size="sm", scale=1)
-                # modal_image_display = gr.Image(label="Full Resolution Image", interactive=False, show_label=False)
-                modal_image_display = gr.HTML(label="Full Resolution Image")
-                preview_column_no = gr.Text(visible=False, value=-1, elem_id="preview_column_no")
+                modal_html_display = gr.HTML()
+                modal_action_input = gr.Text(elem_id="modal_action_input", visible=False)
+                modal_action_trigger = gr.Button(elem_id="modal_action_trigger", visible=False)
             with gr.Row(visible= True): #len(loras)>0) as presets_column:
                 lset_choices = compute_lset_choices(loras_presets) + [(get_new_preset_msg(advanced_ui), "")]
                 with gr.Column(scale=6):
@@ -8399,21 +8429,13 @@ def generate_video_tab(update_form = False, state_dict = None, ui_defaults = Non
                         onemorewindow_btn = gr.Button("Extend this Sample Please !", visible = False)
                         abort_btn = gr.Button("Abort", visible = True)
                 with gr.Accordion("Queue Management", open=False) as queue_accordion:
-                    with gr.Row( ): 
-                        queue_df = gr.DataFrame(
-                            headers=["Qty","Prompt", "Length","Steps","", "", "", "", ""],
-                            datatype=[ "str","markdown","str", "markdown", "markdown", "markdown", "str", "str", "str"],
-                            column_widths= ["5%", None, "7%", "7%", "10%", "10%", "3%", "3%", "34"],
-                            interactive=False,
-                            col_count=(9, "fixed"),
-                            wrap=True,
-                            value=[],
-                            line_breaks= True,
-                            visible= True,
-                            elem_id="queue_df",
-                            max_height= 1000
-
+                    with gr.Row():
+                        queue_html = gr.HTML(
+                            value=generate_queue_html(state_dict["gen"]["queue"]),
+                            elem_id="queue_html_container"
                         )
+                    queue_action_input = gr.Text(elem_id="queue_action_input", visible=False)
+                    queue_action_trigger = gr.Button(elem_id="queue_action_trigger", visible=False)
                     with gr.Row(visible= True):
                         queue_zip_base64_output = gr.Text(visible=False)
                         save_queue_btn = gr.DownloadButton("Save Queue", size="sm")
@@ -8471,7 +8493,7 @@ def generate_video_tab(update_form = False, state_dict = None, ui_defaults = Non
             video_guide_outpainting_checkbox.input(fn=refresh_video_guide_outpainting_row, inputs=[video_guide_outpainting_checkbox, video_guide_outpainting], outputs= [video_guide_outpainting_row,video_guide_outpainting])
             show_advanced.change(fn=switch_advanced, inputs=[state, show_advanced, lset_name], outputs=[advanced_row, preset_buttons_rows, refresh_lora_btn, refresh2_row ,lset_name]).then(
                 fn=switch_prompt_type, inputs = [state, wizard_prompt_activated_var, wizard_variables_var, prompt, wizard_prompt, *prompt_vars], outputs = [wizard_prompt_activated_var, wizard_variables_var, prompt, wizard_prompt, prompt_column_advanced, prompt_column_wizard, prompt_column_wizard_vars, *prompt_vars])
-            queue_df.select( fn=handle_celll_selection, inputs=state, outputs=[queue_df, modal_image_display, modal_container, main_tabs])
+            queue_action_trigger.click(fn=handle_queue_action, inputs=[state, queue_action_input], outputs=[queue_html, main_tabs], show_progress="hidden")
             gr.on( triggers=[output.change, output.select], fn=select_video, inputs=[state, output], outputs=[last_choice, video_info, video_buttons_row, image_buttons_row, video_postprocessing_tab, audio_remuxing_tab], show_progress="hidden")
             preview_trigger.change(refresh_preview, inputs= [state], outputs= [preview], show_progress="hidden")
             PP_MMAudio_setting.change(fn = lambda value : [gr.update(visible = value == 1), gr.update(visible = value == 0)] , inputs = [PP_MMAudio_setting], outputs = [PP_MMAudio_row, PP_custom_audio_row] )
@@ -8506,13 +8528,24 @@ def generate_video_tab(update_form = False, state_dict = None, ui_defaults = Non
             if tab_id == 'generate':
                 output_trigger.change(refresh_gallery,
                     inputs = [state], 
-                    outputs = [output, gen_info, generate_btn, add_to_queue_btn, current_gen_column, current_gen_buttons_row, queue_df, abort_btn, onemorewindow_btn],
+                    outputs = [output, gen_info, generate_btn, add_to_queue_btn, current_gen_column, current_gen_buttons_row, queue_html, abort_btn, onemorewindow_btn],
                     show_progress="hidden"
                     )
 
 
-            preview_column_no.input(show_preview_column_modal, inputs=[state, preview_column_no], outputs=[preview_column_no, modal_image_display, modal_container])
-            abort_btn.click(abort_generation, [state], [ abort_btn] ) #.then(refresh_gallery, inputs = [state, gen_info], outputs = [output, gen_info, queue_df] )
+            modal_action_trigger.click(
+                fn=show_modal_image,
+                inputs=[state, modal_action_input],
+                outputs=[modal_html_display, modal_container],
+                show_progress="hidden"
+            )
+            close_modal_button.click(
+                fn=lambda: gr.Column(visible=False),
+                inputs=[],
+                outputs=[modal_container],
+                show_progress="hidden"
+            )
+            abort_btn.click(abort_generation, [state], [ abort_btn] ) #.then(refresh_gallery, inputs = [state, gen_info], outputs = [output, gen_info, queue_html] )
             onemoresample_btn.click(fn=one_more_sample,inputs=[state], outputs= [state])
             onemorewindow_btn.click(fn=one_more_window,inputs=[state], outputs= [state])
 
@@ -8630,7 +8663,7 @@ def generate_video_tab(update_form = False, state_dict = None, ui_defaults = Non
                 ).then(
                     fn=edit_task_in_queue,
                     inputs=edit_inputs_components + [state],
-                    outputs=[queue_df, main_tabs]
+                    outputs=[queue_html, main_tabs]
                 )
                 cancel_btn.click(
                     fn=cancel_edit,
@@ -8681,7 +8714,7 @@ def generate_video_tab(update_form = False, state_dict = None, ui_defaults = Non
                     outputs= None
                 ).then(fn=process_prompt_and_add_tasks,
                     inputs = [state, model_choice],
-                    outputs=[queue_df, queue_accordion],
+                    outputs=[queue_html, queue_accordion],
                     show_progress="hidden",
                 ).then(
                     fn=update_status,
@@ -8697,7 +8730,7 @@ def generate_video_tab(update_form = False, state_dict = None, ui_defaults = Non
                     outputs= None
                 ).then(fn=process_prompt_and_add_tasks,
                     inputs = [state, model_choice],
-                    outputs= [queue_df, queue_accordion],
+                    outputs= [queue_html, queue_accordion],
                     show_progress="hidden",
                 ).then(fn=prepare_generate_video,
                     inputs= [state],
@@ -8724,7 +8757,7 @@ def generate_video_tab(update_form = False, state_dict = None, ui_defaults = Non
                 gr.on(triggers=[load_queue_btn.upload, main.load],
                     fn=load_queue_action,
                     inputs=[load_queue_btn, state],
-                    outputs=[queue_df]
+                    outputs=[queue_html]
                 ).then(
                      fn=lambda s: (gr.update(visible=bool(get_gen_info(s).get("queue",[]))), gr.Accordion(open=True)) if bool(get_gen_info(s).get("queue",[])) else (gr.update(visible=False), gr.update()),
                      inputs=[state],
@@ -8803,17 +8836,11 @@ def generate_video_tab(update_form = False, state_dict = None, ui_defaults = Non
             clear_queue_btn.click(
                 fn=clear_queue_action,
                 inputs=[state],
-                outputs=[queue_df]
+                outputs=[queue_html]
             ).then(
                  fn=lambda: (gr.update(visible=False), gr.Accordion(open=False)),
                  inputs=None,
                  outputs=[current_gen_column, queue_accordion]
-            )
-
-            close_modal_button.click(
-                lambda: gr.update(visible=False),
-                inputs=[],
-                outputs=[modal_container]
             )
 
     if tab_id == 'edit':
@@ -9488,134 +9515,73 @@ def create_ui():
             margin: 0 20px;
             white-space: nowrap;
         }
-        .queue-item {
-            border: 1px solid #ccc;
-            padding: 10px;
-            margin: 5px 0;
-            border-radius: 5px;
+        #queue_html_container table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 14px;
+            table-layout: fixed;
         }
-        .current {
-            background: #f8f9fa;
-            border-left: 4px solid #007bff;
+        #queue_html_container th {
+            text-align: left;
+            padding: 10px 8px;
+            border-bottom: 2px solid #4a5568;
+            font-weight: bold;
+            font-size: 11px;
+            text-transform: uppercase;
+            color: #a0aec0;
+            white-space: nowrap;
         }
-        .task-header {
-            display: flex;
-            justify-content: space-between;
-            margin-bottom: 5px;
+        #queue_html_container td {
+            padding: 8px;
+            border-bottom: 1px solid #2d3748;
+            vertical-align: middle;
         }
-        .progress-container {
-            height: 10px;
-            background: #e9ecef;
-            border-radius: 5px;
-            overflow: hidden;
+        #queue_html_container tr:hover td {
+            background-color: rgba(255, 255, 255, 0.04);
         }
-        .progress-bar {
-            height: 100%;
-            background: #007bff;
-            transition: width 0.3s ease;
-        }
-        .task-details {
-            display: flex;
-            justify-content: space-between;
-            font-size: 0.9em;
-            color: #6c757d;
-            margin-top: 5px;
-        }
-        .task-prompt {
-            font-size: 0.8em;
-            color: #868e96;
-            margin-top: 5px;
+        #queue_html_container .prompt-cell {
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
         }
-        #queue_df th {
-            pointer-events: none;
+        #queue_html_container .action-button {
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-size: 1.3em;
+            padding: 0;
+            color: #718096;
+            transition: color 0.2s;
+            line-height: 1;
+        }
+        #queue_html_container .action-button:hover {
+            color: #e2e8f0;
+        }
+        #queue_html_container .center-align {
             text-align: center;
-            vertical-align: middle;
-            font-size:11px;
         }
-        #xqueue_df table {
-            width: 100%;
-            overflow: hidden !important;
+        #queue_html_container .text-left {
+            text-align: left;
         }
-        #xqueue_df::-webkit-scrollbar {
-            display: none !important;
-        }
-        #xqueue_df {
-            scrollbar-width: none !important;
-            -ms-overflow-style: none !important;
-        }
-        .selection-button {
-            display: none;
-        }
-        .cell-selected {
-            --ring-color: none;
-        }
-        #queue_df th:nth-child(1),
-        #queue_df td:nth-child(1) {
-            width: 60px;
-            text-align: center;
-            vertical-align: middle;
-            cursor: default !important;
-            pointer-events: none;
-        }
-        #xqueue_df th:nth-child(2),
-        #queue_df td:nth-child(2) {
-            text-align: center;
-            vertical-align: middle;
-            white-space: normal;
-        }
-        #queue_df td:nth-child(2) {
-            cursor: default !important;
-        }
-        #queue_df th:nth-child(3),
-        #queue_df td:nth-child(3) {
-            width: 60px;
-            text-align: center;
-            vertical-align: middle;
-            cursor: default !important;
-            pointer-events: none;
-        }
-        #queue_df th:nth-child(4),
-        #queue_df td:nth-child(4) {
-            width: 60px;
-            text-align: center;
-            white-space: nowrap;
-            cursor: default !important;
-            pointer-events: none;
-        }
-        #queue_df th:nth-child(5), #queue_df td:nth-child(7),
-        #queue_df th:nth-child(6), #queue_df td:nth-child(8) {
-            width: 60px;
-            text-align: center;
-            vertical-align: middle;
-        }
-        #queue_df td:nth-child(5) img,
-        #queue_df td:nth-child(6) img {
+        #queue_html_container .hover-image img {
             max-width: 50px;
             max-height: 50px;
             object-fit: contain;
             display: block;
             margin: auto;
-            cursor: pointer;
         }
-        #queue_df th:nth-child(7), #queue_df td:nth-child(9),
-        #queue_df th:nth-child(8), #queue_df td:nth-child(10),
-        #queue_df th:nth-child(9), #queue_df td:nth-child(11) {
-            width: 20px;
-            padding: 2px !important;
-            cursor: pointer;
-            text-align: center;
-            font-weight: bold;
-            vertical-align: middle;
-        }
-        #queue_df td:nth-child(5):hover,
-        #queue_df td:nth-child(6):hover,
-        #queue_df td:nth-child(7):hover,
-        #queue_df td:nth-child(8):hover,
-        #queue_df td:nth-child(9):hover {
-            background-color: #e0e0e0;
+        #image-modal-container {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.7);
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+            padding: 20px;
+            box-sizing: border-box;
         }
         #image-modal-container {
             position: fixed;
@@ -9759,18 +9725,39 @@ def create_ui():
 
     js = """
     function() {
-        // Attach function to window object to make it globally accessible
-        window.sendColIndex = function(index) {
-            const input= document.querySelector('#preview_column_no textarea');
-            if (input) {
-                input.value = index;
-                input.dispatchEvent(new Event("input", { bubbles: true }));
-                input.focus();
-                input.blur();
-                console.log('Events dispatched for column:', index);
-                }
+        window.updateAndTrigger = function(action) {
+            const hiddenTextbox = document.querySelector('#queue_action_input textarea');
+            const hiddenButton = document.querySelector('#queue_action_trigger');
+            
+            if (hiddenTextbox && hiddenButton) {
+                hiddenTextbox.value = action;
+                const inputEvent = new Event('input', { bubbles: true });
+                hiddenTextbox.dispatchEvent(inputEvent);
+                hiddenButton.click();
+            } else {
+                console.error("Could not find hidden queue action elements.");
+            }
         };
-        console.log('sendColIndex function attached to window');
+        console.log('updateAndTrigger function for queue is ready.');
+
+        window.showImageModal = function(action) {
+            const hiddenTextbox = document.querySelector('#modal_action_input textarea');
+            const hiddenButton = document.querySelector('#modal_action_trigger');
+            if (hiddenTextbox && hiddenButton) {
+                hiddenTextbox.value = action;
+                hiddenTextbox.dispatchEvent(new Event('input', { bubbles: true }));
+                hiddenButton.click();
+            } else {
+                console.error("Could not find hidden modal action elements.");
+            }
+        };
+
+        window.closeImageModal = function() {
+            const modal = document.querySelector('#image-modal-container');
+            if (modal) {
+                modal.style.display = 'none';
+            }
+        };
 
         // cancel wheel usage inside image editor    
         const hit = n => n?.id === "img_editor" || n?.classList?.contains("wheel-pass");
