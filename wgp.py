@@ -9556,6 +9556,8 @@ def create_ui():
             color: #718096;
             transition: color 0.2s;
             line-height: 1;
+            position: relative;
+            left: -3px;
         }
         #queue_html_container .action-button:hover {
             color: #e2e8f0;
