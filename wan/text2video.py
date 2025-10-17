@@ -38,6 +38,7 @@ class WanT2V:
         dit_fsdp=False,
         use_usp=False,
         t5_cpu=False,
+        vae_cpu=False,
     ):
         r"""
         Initializes the Wan text-to-video generation model components.
@@ -59,11 +60,14 @@ class WanT2V:
                 Enable distribution strategy of USP.
             t5_cpu (`bool`, *optional*, defaults to False):
                 Whether to place T5 model on CPU. Only works without t5_fsdp.
+            vae_cpu (`bool`, *optional*, defaults to False):
+                Whether to place VAE model on CPU to save VRAM. VAE will be moved to GPU only when needed.
         """
         self.device = torch.device(f"cuda:{device_id}")
         self.config = config
         self.rank = rank
         self.t5_cpu = t5_cpu
+        self.vae_cpu = vae_cpu
 
         self.num_train_timesteps = config.num_train_timesteps
         self.param_dtype = config.param_dtype
@@ -79,9 +83,12 @@ class WanT2V:
 
         self.vae_stride = config.vae_stride
         self.patch_size = config.patch_size
+        # Initialize VAE on CPU if vae_cpu=True to save VRAM during pipeline initialization and diffusion loop
+        # VAE is only needed at the end for decoding latents to pixels
+        vae_device = torch.device('cpu') if vae_cpu else self.device
         self.vae = WanVAE(
             vae_pth=os.path.join(checkpoint_dir, config.vae_checkpoint),
-            device=self.device)
+            device=vae_device)
 
         logging.info(f"Creating WanModel from {checkpoint_dir}")
         self.model = WanModel.from_pretrained(checkpoint_dir)
@@ -172,11 +179,16 @@ class WanT2V:
         seed_g.manual_seed(seed)
 
         if not self.t5_cpu:
+            # Offload DiT to CPU first if needed to make room for T5
+            if offload_model:
+                self.model.cpu()
+                torch.cuda.empty_cache()
             self.text_encoder.model.to(self.device)
             context = self.text_encoder([input_prompt], self.device)
             context_null = self.text_encoder([n_prompt], self.device)
             if offload_model:
                 self.text_encoder.model.cpu()
+                torch.cuda.empty_cache()
         else:
             context = self.text_encoder([input_prompt], torch.device('cpu'))
             context_null = self.text_encoder([n_prompt], torch.device('cpu'))
@@ -258,7 +270,21 @@ class WanT2V:
                 self.model.cpu()
                 torch.cuda.empty_cache()
             if self.rank == 0:
+                # Move VAE to GPU for decoding if it's on CPU
+                if self.vae_cpu:
+                    self.vae.model.to(self.device)
+                    # Also move scale tensors to GPU
+                    self.vae.mean = self.vae.mean.to(self.device)
+                    self.vae.std = self.vae.std.to(self.device)
+                    self.vae.scale = [self.vae.mean, 1.0 / self.vae.std]
                 videos = self.vae.decode(x0)
+                # Offload VAE back to CPU after decoding to free VRAM
+                if self.vae_cpu and offload_model:
+                    self.vae.model.cpu()
+                    self.vae.mean = self.vae.mean.cpu()
+                    self.vae.std = self.vae.std.cpu()
+                    self.vae.scale = [self.vae.mean, 1.0 / self.vae.std]
+                    torch.cuda.empty_cache()
 
         del noise, latents
         del sample_scheduler

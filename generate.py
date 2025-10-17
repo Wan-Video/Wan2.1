@@ -151,6 +151,11 @@ def _parse_args():
         default=False,
         help="Whether to place T5 model on CPU.")
     parser.add_argument(
+        "--vae_cpu",
+        action="store_true",
+        default=False,
+        help="Whether to place VAE model on CPU to save VRAM. VAE will be moved to GPU only when needed for encoding/decoding.")
+    parser.add_argument(
         "--dit_fsdp",
         action="store_true",
         default=False,
@@ -366,6 +371,7 @@ def generate(args):
             dit_fsdp=args.dit_fsdp,
             use_usp=(args.ulysses_size > 1 or args.ring_size > 1),
             t5_cpu=args.t5_cpu,
+            vae_cpu=args.vae_cpu,
         )
 
         logging.info(
@@ -423,6 +429,7 @@ def generate(args):
             dit_fsdp=args.dit_fsdp,
             use_usp=(args.ulysses_size > 1 or args.ring_size > 1),
             t5_cpu=args.t5_cpu,
+            vae_cpu=args.vae_cpu,
         )
 
         logging.info("Generating video ...")
@@ -481,6 +488,7 @@ def generate(args):
             dit_fsdp=args.dit_fsdp,
             use_usp=(args.ulysses_size > 1 or args.ring_size > 1),
             t5_cpu=args.t5_cpu,
+            vae_cpu=args.vae_cpu,
         )
 
         logging.info("Generating video ...")
@@ -529,6 +537,7 @@ def generate(args):
             dit_fsdp=args.dit_fsdp,
             use_usp=(args.ulysses_size > 1 or args.ring_size > 1),
             t5_cpu=args.t5_cpu,
+            vae_cpu=args.vae_cpu,
         )
 
         src_video, src_mask, src_ref_images = wan_vace.prepare_source(
