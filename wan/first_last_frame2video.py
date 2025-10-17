@@ -41,6 +41,7 @@ class WanFLF2V:
         dit_fsdp=False,
         use_usp=False,
         t5_cpu=False,
+        vae_cpu=False,
         init_on_cpu=True,
     ):
         r"""
@@ -63,6 +64,8 @@ class WanFLF2V:
                 Enable distribution strategy of USP.
             t5_cpu (`bool`, *optional*, defaults to False):
                 Whether to place T5 model on CPU. Only works without t5_fsdp.
+            vae_cpu (`bool`, *optional*, defaults to False):
+                Whether to place VAE model on CPU to save VRAM. VAE will be moved to GPU only when needed.
             init_on_cpu (`bool`, *optional*, defaults to True):
                 Enable initializing Transformer Model on CPU. Only works without FSDP or USP.
         """
@@ -71,6 +74,7 @@ class WanFLF2V:
         self.rank = rank
         self.use_usp = use_usp
         self.t5_cpu = t5_cpu
+        self.vae_cpu = vae_cpu
 
         self.num_train_timesteps = config.num_train_timesteps
         self.param_dtype = config.param_dtype
@@ -87,9 +91,12 @@ class WanFLF2V:
 
         self.vae_stride = config.vae_stride
         self.patch_size = config.patch_size
+        # Initialize VAE on CPU if vae_cpu=True to save VRAM during pipeline initialization and diffusion loop
+        # VAE is only needed for encoding first/last frames and decoding final latents
+        vae_device = torch.device('cpu') if vae_cpu else self.device
         self.vae = WanVAE(
             vae_pth=os.path.join(checkpoint_dir, config.vae_checkpoint),
-            device=self.device)
+            device=vae_device)
 
         self.clip = CLIPModel(
             dtype=config.clip_dtype,
@@ -242,11 +249,16 @@ class WanFLF2V:
 
         # preprocess
         if not self.t5_cpu:
+            # Offload DiT to CPU first if needed to make room for T5
+            if offload_model:
+                self.model.cpu()
+                torch.cuda.empty_cache()
             self.text_encoder.model.to(self.device)
             context = self.text_encoder([input_prompt], self.device)
             context_null = self.text_encoder([n_prompt], self.device)
             if offload_model:
                 self.text_encoder.model.cpu()
+                torch.cuda.empty_cache()
         else:
             context = self.text_encoder([input_prompt], torch.device('cpu'))
             context_null = self.text_encoder([n_prompt], torch.device('cpu'))
@@ -259,6 +271,13 @@ class WanFLF2V:
         if offload_model:
             self.clip.model.cpu()
 
+        # Move VAE to GPU for encoding first and last frames if it's on CPU
+        if self.vae_cpu:
+            self.vae.model.to(self.device)
+            # Also move scale tensors to GPU
+            self.vae.mean = self.vae.mean.to(self.device)
+            self.vae.std = self.vae.std.to(self.device)
+            self.vae.scale = [self.vae.mean, 1.0 / self.vae.std]
         y = self.vae.encode([
             torch.concat([
                 torch.nn.functional.interpolate(
@@ -274,6 +293,12 @@ class WanFLF2V:
                          dim=1).to(self.device)
         ])[0]
         y = torch.concat([msk, y])
+        # Offload VAE back to CPU after encoding
+        if self.vae_cpu and offload_model:
+            self.vae.model.cpu()
+            self.vae.mean = self.vae.mean.cpu()
+            self.vae.std = self.vae.std.cpu()
+            self.vae.scale = [self.vae.mean, 1.0 / self.vae.std]
 
         @contextmanager
         def noop_no_sync():
@@ -364,7 +389,21 @@ class WanFLF2V:
                 torch.cuda.empty_cache()
 
             if self.rank == 0:
+                # Move VAE to GPU for decoding if it's on CPU
+                if self.vae_cpu:
+                    self.vae.model.to(self.device)
+                    # Also move scale tensors to GPU
+                    self.vae.mean = self.vae.mean.to(self.device)
+                    self.vae.std = self.vae.std.to(self.device)
+                    self.vae.scale = [self.vae.mean, 1.0 / self.vae.std]
                 videos = self.vae.decode(x0)
+                # Offload VAE back to CPU after decoding to free VRAM
+                if self.vae_cpu and offload_model:
+                    self.vae.model.cpu()
+                    self.vae.mean = self.vae.mean.cpu()
+                    self.vae.std = self.vae.std.cpu()
+                    self.vae.scale = [self.vae.mean, 1.0 / self.vae.std]
+                    torch.cuda.empty_cache()
 
         del noise, latent
         del sample_scheduler
