@@ -4,7 +4,7 @@ from fastapi.responses import JSONResponse
 import os
 from dotenv import load_dotenv
 
-from routes import generation, auth, users
+from routes import generation, auth, users, webhooks
 
 load_dotenv()
 
@@ -29,6 +29,7 @@ app.add_middleware(
 app.include_router(generation.router, prefix="/api/generation", tags=["generation"])
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(users.router, prefix="/api/users", tags=["users"])
+app.include_router(webhooks.router, prefix="/api/webhooks", tags=["webhooks"])
 
 
 @app.get("/")
