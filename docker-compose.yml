@@ -1,0 +1,99 @@
+version: '3.8'
+
+services:
+  wan2-1:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: wan2.1:latest
+    container_name: wan2.1-gpu
+
+    # GPU support - requires NVIDIA Docker runtime
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+    # Environment variables
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - CUDA_VISIBLE_DEVICES=0
+      - PYTHONUNBUFFERED=1
+      - TORCH_HOME=/app/cache
+      - HF_HOME=/app/cache/huggingface
+      - TRANSFORMERS_CACHE=/app/cache/transformers
+      # Optional: Set your Dashscope API key for prompt extension
+      # - DASH_API_KEY=your_api_key_here
+      # - DASH_API_URL=https://dashscope.aliyuncs.com/api/v1
+
+    # Volume mounts
+    volumes:
+      # Mount models directory (download models here)
+      - ./models:/app/models
+      # Mount outputs directory
+      - ./outputs:/app/outputs
+      # Mount cache directory for model downloads
+      - ./cache:/app/cache
+      # Optional: Mount examples directory if you modify it
+      - ./examples:/app/examples
+
+    # Port mapping for Gradio interface
+    ports:
+      - "7860:7860"
+
+    # Shared memory size (important for DataLoader workers)
+    shm_size: '16gb'
+
+    # Keep container running
+    stdin_open: true
+    tty: true
+
+    # Network mode
+    network_mode: bridge
+
+    # Restart policy
+    restart: unless-stopped
+
+  # CPU-only service (for systems without GPU)
+  wan2-1-cpu:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: wan2.1:latest
+    container_name: wan2.1-cpu
+    profiles:
+      - cpu
+
+    environment:
+      - PYTHONUNBUFFERED=1
+      - TORCH_HOME=/app/cache
+      - HF_HOME=/app/cache/huggingface
+      - TRANSFORMERS_CACHE=/app/cache/transformers
+      - CUDA_VISIBLE_DEVICES=""
+
+    volumes:
+      - ./models:/app/models
+      - ./outputs:/app/outputs
+      - ./cache:/app/cache
+      - ./examples:/app/examples
+
+    ports:
+      - "7860:7860"
+
+    shm_size: '8gb'
+
+    stdin_open: true
+    tty: true
+
+    network_mode: bridge
+
+    restart: unless-stopped
+
+volumes:
+  models:
+  outputs:
+  cache:

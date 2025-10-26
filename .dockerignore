@@ -1,0 +1,92 @@
+# Git files
+.git
+.gitignore
+.gitattributes
+
+# Docker files
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Model files (download separately)
+models/
+*.pth
+*.pt
+*.bin
+*.safetensors
+*.ckpt
+
+# Output files
+outputs/
+output/
+*.mp4
+*.avi
+*.mov
+*.png
+*.jpg
+*.jpeg
+
+# Cache directories
+cache/
+.cache/
+__pycache__/
+
+# Logs
+*.log
+logs/
+
+# Documentation (keep lightweight)
+*.md
+!README.md
+!DOCKER_SETUP.md
+
+# Test files
+tests/
+test/
+*.test.py
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+.travis.yml
+
+# Temporary files
+tmp/
+temp/
+*.tmp
