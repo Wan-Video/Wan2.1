@@ -1,0 +1,12 @@
+fastapi==0.115.5
+uvicorn[standard]==0.32.1
+python-dotenv==1.0.1
+pydantic==2.10.3
+pydantic-settings==2.6.1
+supabase==2.10.0
+replicate==1.0.4
+redis==5.2.0
+celery==5.4.0
+websockets==14.1
+python-multipart==0.0.18
+httpx==0.28.1
