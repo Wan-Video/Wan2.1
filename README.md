@@ -36,6 +36,7 @@ In this repository, we present **Wan2.1**, a comprehensive and open suite of vid
 
 ## Community Works
 If your work has improved **Wan2.1** and you would like more people to see it, please inform us.
+- [DriVerse](https://github.com/shalfun/DriVerse), an autonomous driving world model based on **Wan2.1-14B-I2V**, generates future driving videos conditioned on any scene frame and given trajectory. Refer to the [project page](https://github.com/shalfun/DriVerse/tree/main) for more examples.
 - [EchoShot](https://github.com/JoHnneyWang/EchoShot), a native multi-shot portrait video generation model based on **Wan2.1-T2V-1.3B**, allows generation of multiple video clips featuring the same character as well as highly flexible content controllability. Refer to [their project page](https://johnneywang.github.io/EchoShot-webpage/) for more information.
 - [AniCrafter](https://github.com/MyNiuuu/AniCrafter), a human-centric animation model based on **Wan2.1-14B-I2V**, controls the Video Diffusion Models with 3DGS Avatars to insert and animate anyone into any scene following given motion sequences. Refer to the [project page](https://myniuuu.github.io/AniCrafter) for more examples.
 - [HyperMotion](https://vivocameraresearch.github.io/hypermotion/), a human image animation framework based on **Wan2.1**, addresses the challenge of generating complex human body motions in pose-guided animation. Refer to [their website](https://vivocameraresearch.github.io/magictryon/) for more examples.
