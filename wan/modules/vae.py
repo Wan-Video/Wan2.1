@@ -1,11 +1,20 @@
 # Copyright 2024-2025 The Alibaba Wan Team Authors. All rights reserved.
 import logging
+from math import sqrt
 
 import torch
-import torch.cuda.amp as amp
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.nn import Upsample
 from einops import rearrange
+
+try:
+    import torch_musa
+    torch.backends.mudnn.allow_tf32 = True
+except ModuleNotFoundError:
+    torch_musa = None
+
+from wan.utils.platform import get_device_type
 
 __all__ = [
     'WanVAE',
@@ -44,23 +53,17 @@ class RMS_norm(nn.Module):
         shape = (dim, *broadcastable_dims) if channel_first else (dim,)
 
         self.channel_first = channel_first
-        self.scale = dim**0.5
+        self.scale = sqrt(dim)
         self.gamma = nn.Parameter(torch.ones(shape))
         self.bias = nn.Parameter(torch.zeros(shape)) if bias else 0.
 
     def forward(self, x):
-        return F.normalize(
-            x, dim=(1 if self.channel_first else
-                    -1)) * self.scale * self.gamma + self.bias
-
-
-class Upsample(nn.Upsample):
-
-    def forward(self, x):
-        """
-        Fix bfloat16 support for nearest neighbor interpolation.
-        """
-        return super().forward(x.float()).type_as(x)
+        return (
+            F.normalize(x.float(), dim=(1 if self.channel_first else -1)).type_as(x)
+            * self.scale
+            * self.gamma
+            + self.bias
+        )
 
 
 class Resample(nn.Module):
@@ -253,6 +256,10 @@ class AttentionBlock(nn.Module):
             q,
             k,
             v,
+            attn_mask=None,
+            dropout_p=0.0,
+            is_causal=False,
+            scale=None,
         )
         x = x.squeeze(1).permute(0, 2, 1).reshape(b * t, c, h, w)
 
@@ -621,8 +628,8 @@ class WanVAE:
     def __init__(self,
                  z_dim=16,
                  vae_pth='cache/vae_step_411000.pth',
-                 dtype=torch.float,
-                 device="cuda"):
+                 dtype=torch.bfloat16,
+                 device=get_device_type()):
         self.dtype = dtype
         self.device = device
 
@@ -648,16 +655,12 @@ class WanVAE:
         """
         videos: A list of videos each with shape [C, T, H, W].
         """
-        with amp.autocast(dtype=self.dtype):
-            return [
-                self.model.encode(u.unsqueeze(0), self.scale).float().squeeze(0)
-                for u in videos
-            ]
+        return [
+            self.model.encode(u.unsqueeze(0), self.scale).squeeze(0) for u in videos
+        ]
 
     def decode(self, zs):
-        with amp.autocast(dtype=self.dtype):
-            return [
-                self.model.decode(u.unsqueeze(0),
-                                  self.scale).float().clamp_(-1, 1).squeeze(0)
-                for u in zs
-            ]
+        return [
+            self.model.decode(u.unsqueeze(0), self.scale).clamp_(-1, 1).squeeze(0)
+            for u in zs
+        ]

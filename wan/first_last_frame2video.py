@@ -6,27 +6,40 @@ import os
 import random
 import sys
 import types
+from time import perf_counter
 from contextlib import contextmanager
 from functools import partial
 
 import numpy as np
 import torch
 import torch.cuda.amp as amp
+from torch.cuda import empty_cache, synchronize
 import torch.distributed as dist
 import torchvision.transforms.functional as TF
 from tqdm import tqdm
 
-from .distributed.fsdp import shard_model
-from .modules.clip import CLIPModel
-from .modules.model import WanModel
-from .modules.t5 import T5EncoderModel
-from .modules.vae import WanVAE
-from .utils.fm_solvers import (
+try:
+    import torch_musa
+    import torch_musa.core.amp as amp
+    from torch_musa.core.memory import empty_cache
+    from torch_musa.core.device import synchronize
+    torch.backends.mudnn.allow_tf32 = True
+except ModuleNotFoundError:
+    torch_musa = None
+
+from wan.distributed.fsdp import shard_model
+from wan.modules.clip import CLIPModel
+from wan.modules.model import WanModel
+from wan.modules.t5 import T5EncoderModel
+from wan.modules.vae import WanVAE
+from wan.utils.fm_solvers import (
     FlowDPMSolverMultistepScheduler,
     get_sampling_sigmas,
     retrieve_timesteps,
 )
-from .utils.fm_solvers_unipc import FlowUniPCMultistepScheduler
+from wan.utils.fm_solvers_unipc import FlowUniPCMultistepScheduler
+from wan.utils.platform import get_device
+from wan.utils.memory_format import convert_conv3d_weight_memory_format
 
 
 class WanFLF2V:
@@ -42,6 +55,7 @@ class WanFLF2V:
         use_usp=False,
         t5_cpu=False,
         init_on_cpu=True,
+        profiler=None,
     ):
         r"""
         Initializes the image-to-video generation model components.
@@ -66,7 +80,7 @@ class WanFLF2V:
             init_on_cpu (`bool`, *optional*, defaults to True):
                 Enable initializing Transformer Model on CPU. Only works without FSDP or USP.
         """
-        self.device = torch.device(f"cuda:{device_id}")
+        self.device = get_device(device_id)
         self.config = config
         self.rank = rank
         self.use_usp = use_usp
@@ -90,6 +104,7 @@ class WanFLF2V:
         self.vae = WanVAE(
             vae_pth=os.path.join(checkpoint_dir, config.vae_checkpoint),
             device=self.device)
+        convert_conv3d_weight_memory_format(self.vae.model, memory_format=torch.channels_last_3d)
 
         self.clip = CLIPModel(
             dtype=config.clip_dtype,
@@ -121,7 +136,8 @@ class WanFLF2V:
             self.sp_size = 1
 
         if dist.is_initialized():
-            dist.barrier()
+            # dist.barrier()
+            pass
         if dit_fsdp:
             self.model = shard_fn(self.model)
         else:
@@ -129,6 +145,7 @@ class WanFLF2V:
                 self.model.to(self.device)
 
         self.sample_neg_prompt = config.sample_neg_prompt
+        self.profiler = profiler
 
     def generate(self,
                  input_prompt,
@@ -183,6 +200,11 @@ class WanFLF2V:
                 - H: Frame height (from max_area)
                 - W: Frame width from max_area)
         """
+        start_time = 0.0
+        end_time = 0.0
+        if self.rank == 0:
+            start_time = perf_counter()
+
         first_frame_size = first_frame.size
         last_frame_size = last_frame.size
         first_frame = TF.to_tensor(first_frame).sub_(0.5).div_(0.5).to(
@@ -275,6 +297,10 @@ class WanFLF2V:
         ])[0]
         y = torch.concat([msk, y])
 
+        if self.rank == 0:
+            end_time = perf_counter()
+            logging.info(f"[preprocess and VAE encode] Elapsed time: {end_time - start_time:.2f} seconds")
+
         @contextmanager
         def noop_no_sync():
             yield
@@ -323,10 +349,16 @@ class WanFLF2V:
             }
 
             if offload_model:
-                torch.cuda.empty_cache()
+                empty_cache()
+
+            if self.rank == 0:
+                start_time = perf_counter()
 
             self.model.to(self.device)
             for _, t in enumerate(tqdm(timesteps)):
+                if self.profiler and self.rank == 0:
+                    self.profiler.step()
+
                 latent_model_input = [latent.to(self.device)]
                 timestep = [t]
 
@@ -336,12 +368,12 @@ class WanFLF2V:
                     latent_model_input, t=timestep, **arg_c)[0].to(
                         torch.device('cpu') if offload_model else self.device)
                 if offload_model:
-                    torch.cuda.empty_cache()
+                    empty_cache()
                 noise_pred_uncond = self.model(
                     latent_model_input, t=timestep, **arg_null)[0].to(
                         torch.device('cpu') if offload_model else self.device)
                 if offload_model:
-                    torch.cuda.empty_cache()
+                    empty_cache()
                 noise_pred = noise_pred_uncond + guide_scale * (
                     noise_pred_cond - noise_pred_uncond)
 
@@ -356,22 +388,30 @@ class WanFLF2V:
                     generator=seed_g)[0]
                 latent = temp_x0.squeeze(0)
 
-                x0 = [latent.to(self.device)]
-                del latent_model_input, timestep
+            if self.rank == 0:
+                end_time = perf_counter()
+                logging.info(f"[sampling time steps] Elapsed time: {end_time - start_time:.2f} seconds")
+
+            x0 = [latent.to(self.device)]
+            del latent_model_input, timestep
 
             if offload_model:
                 self.model.cpu()
-                torch.cuda.empty_cache()
+                empty_cache()
 
             if self.rank == 0:
+                start_time = perf_counter()
                 videos = self.vae.decode(x0)
+                end_time = perf_counter()
+                logging.info(f"[VAE decoding] Elapsed time: {end_time - start_time:.2f} seconds")
 
         del noise, latent
         del sample_scheduler
         if offload_model:
             gc.collect()
-            torch.cuda.synchronize()
+            synchronize()
         if dist.is_initialized():
-            dist.barrier()
+            # dist.barrier()
+            pass
 
         return videos[0] if self.rank == 0 else None

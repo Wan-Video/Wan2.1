@@ -12,12 +12,25 @@ import random
 
 import torch
 import torch.distributed as dist
+from torch.cuda import set_device
 from PIL import Image
+
+try:
+    import torch_musa
+    from torch_musa.core.device import set_device
+except ModuleNotFoundError:
+    torch_musa = None
 
 import wan
 from wan.configs import MAX_AREA_CONFIGS, SIZE_CONFIGS, SUPPORTED_SIZES, WAN_CONFIGS
 from wan.utils.prompt_extend import DashScopePromptExpander, QwenPromptExpander
 from wan.utils.utils import cache_image, cache_video, str2bool
+from wan.utils.platform import (
+    get_device_type,
+    get_torch_distributed_backend,
+    get_torch_profiler_activities,
+)
+
 
 
 EXAMPLE_PROMPT = {
@@ -243,6 +256,11 @@ def _parse_args():
         type=float,
         default=5.0,
         help="Classifier free guidance scale.")
+    parser.add_argument(
+        "--profile",
+        action="store_true",
+        default=False,
+        help="profile the generating procedure.")
 
     args = parser.parse_args()
 
@@ -263,6 +281,30 @@ def _init_logging(rank):
         logging.basicConfig(level=logging.ERROR)
 
 
+def _init_profiler():
+    profiler = torch.profiler.profile(
+        activities=get_torch_profiler_activities(),
+        on_trace_ready=torch.profiler.tensorboard_trace_handler('./logs'),
+        record_shapes=True,
+        profile_memory=True,
+        with_stack=True,
+    )
+    profiler.start()
+    return profiler
+
+
+def _finalize_profiler(profiler):
+    profiler.stop()
+    table = profiler.key_averages().table(
+        sort_by=f"{get_device_type()}_time_total",
+        row_limit=20,
+    )
+    file_name = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    with open(f"logs/profiling-{file_name}.txt", "w") as f:
+        f.write(table)
+    del file_name
+
+
 def generate(args):
     rank = int(os.getenv("RANK", 0))
     world_size = int(os.getenv("WORLD_SIZE", 1))
@@ -275,9 +317,9 @@ def generate(args):
         logging.info(
             f"offload_model is not specified, set to {args.offload_model}.")
     if world_size > 1:
-        torch.cuda.set_device(local_rank)
+        set_device(local_rank)
         dist.init_process_group(
-            backend="nccl",
+            backend=get_torch_distributed_backend(),
             init_method="env://",
             rank=rank,
             world_size=world_size)
@@ -329,6 +371,10 @@ def generate(args):
         base_seed = [args.base_seed] if rank == 0 else [None]
         dist.broadcast_object_list(base_seed, src=0)
         args.base_seed = base_seed[0]
+    
+    profiler = None
+    if args.profile and rank == 0:
+        profiler = _init_profiler()
 
     if "t2v" in args.task or "t2i" in args.task:
         if args.prompt is None:
@@ -366,10 +412,23 @@ def generate(args):
             dit_fsdp=args.dit_fsdp,
             use_usp=(args.ulysses_size > 1 or args.ring_size > 1),
             t5_cpu=args.t5_cpu,
+            profiler=profiler,
         )
 
-        logging.info(
-            f"Generating {'image' if 't2i' in args.task else 'video'} ...")
+        logging.info("Warming up WanT2V pipeline ...")
+        with torch.no_grad():
+            _ = wan_t2v.generate(
+                args.prompt,
+                size=SIZE_CONFIGS[args.size],
+                frame_num=args.frame_num,
+                shift=args.sample_shift,
+                sample_solver=args.sample_solver,
+                sampling_steps=3,
+                guide_scale=args.sample_guide_scale,
+                seed=args.base_seed,
+                offload_model=args.offload_model)
+
+        logging.info(f"Generating {'image' if 't2i' in args.task else 'video'} ...")
         video = wan_t2v.generate(
             args.prompt,
             size=SIZE_CONFIGS[args.size],
@@ -423,7 +482,22 @@ def generate(args):
             dit_fsdp=args.dit_fsdp,
             use_usp=(args.ulysses_size > 1 or args.ring_size > 1),
             t5_cpu=args.t5_cpu,
+            profiler=profiler,
         )
+
+        logging.info("Warming up WanI2V pipeline ...")
+        with torch.no_grad():
+            _ = wan_i2v.generate(
+                args.prompt,
+                img,
+                max_area=MAX_AREA_CONFIGS[args.size],
+                frame_num=args.frame_num,
+                shift=args.sample_shift,
+                sample_solver=args.sample_solver,
+                sampling_steps=3,
+                guide_scale=args.sample_guide_scale,
+                seed=args.base_seed,
+                offload_model=args.offload_model)
 
         logging.info("Generating video ...")
         video = wan_i2v.generate(
@@ -481,7 +555,23 @@ def generate(args):
             dit_fsdp=args.dit_fsdp,
             use_usp=(args.ulysses_size > 1 or args.ring_size > 1),
             t5_cpu=args.t5_cpu,
+            profiler=profiler
         )
+
+        logging.info("Warming up WanFLF2V pipeline ...")
+        with torch.no_grad():
+            _ = wan_flf2v.generate(
+                args.prompt,
+                first_frame,
+                last_frame,
+                max_area=MAX_AREA_CONFIGS[args.size],
+                frame_num=args.frame_num,
+                shift=args.sample_shift,
+                sample_solver=args.sample_solver,
+                sampling_steps=3,
+                guide_scale=args.sample_guide_scale,
+                seed=args.base_seed,
+                offload_model=args.offload_model)
 
         logging.info("Generating video ...")
         video = wan_flf2v.generate(
@@ -529,6 +619,7 @@ def generate(args):
             dit_fsdp=args.dit_fsdp,
             use_usp=(args.ulysses_size > 1 or args.ring_size > 1),
             t5_cpu=args.t5_cpu,
+            profiler=profiler
         )
 
         src_video, src_mask, src_ref_images = wan_vace.prepare_source(
@@ -536,6 +627,22 @@ def generate(args):
                 None if args.src_ref_images is None else
                 args.src_ref_images.split(',')
             ], args.frame_num, SIZE_CONFIGS[args.size], device)
+
+        logging.info("Warming up VACE pipeline ...")
+        with torch.no_grad():
+            _ = wan_vace.generate(
+                args.prompt,
+                src_video,
+                src_mask,
+                src_ref_images,
+                size=SIZE_CONFIGS[args.size],
+                frame_num=args.frame_num,
+                shift=args.sample_shift,
+                sample_solver=args.sample_solver,
+                sampling_steps=3,
+                guide_scale=args.sample_guide_scale,
+                seed=args.base_seed,
+                offload_model=args.offload_model)
 
         logging.info(f"Generating video...")
         video = wan_vace.generate(
@@ -553,6 +660,9 @@ def generate(args):
             offload_model=args.offload_model)
     else:
         raise ValueError(f"Unkown task type: {args.task}")
+
+    if args.profile and rank == 0:
+        _finalize_profiler(profiler)
 
     if rank == 0:
         if args.save_file is None:

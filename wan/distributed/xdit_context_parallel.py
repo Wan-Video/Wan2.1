@@ -6,7 +6,18 @@ from xfuser.core.distributed import (
     get_sequence_parallel_world_size,
     get_sp_group,
 )
-from xfuser.core.long_ctx_attention import xFuserLongContextAttention
+from xfuser.core.long_ctx_attention import xFuserLongContextAttention, AttnType
+attn_type:AttnType = AttnType.FA
+
+from wan.modules.rope import rope_apply_pytorch, rope_apply_triton
+
+try:
+    import torch_musa
+    import torch_musa.core.amp as amp
+    attn_type = AttnType.TORCH
+    torch.backends.mudnn.allow_tf32 = True
+except ImportError:
+    torch_musa = None
 
 from ..modules.model import sinusoidal_embedding_1d
 
@@ -25,7 +36,7 @@ def pad_freqs(original_tensor, target_len):
 
 
 @amp.autocast(enabled=False)
-def rope_apply(x, grid_sizes, freqs):
+def rope_apply(x, grid_sizes, freqs, sp_size, sp_rank):
     """
     x:          [B, L, N, C].
     grid_sizes: [B, 3].
@@ -51,8 +62,6 @@ def rope_apply(x, grid_sizes, freqs):
                             dim=-1).reshape(seq_len, 1, -1)
 
         # apply rotary embedding
-        sp_size = get_sequence_parallel_world_size()
-        sp_rank = get_sequence_parallel_rank()
         freqs_i = pad_freqs(freqs_i, s * sp_size)
         s_per_rank = s
         freqs_i_rank = freqs_i[(sp_rank * s_per_rank):((sp_rank + 1) *
@@ -109,9 +118,13 @@ def usp_dit_forward(
     if self.model_type == 'i2v':
         assert clip_fea is not None and y is not None
     # params
+    dtype = self.patch_embedding.weight.dtype
     device = self.patch_embedding.weight.device
-    if self.freqs.device != device:
-        self.freqs = self.freqs.to(device)
+    if self.freqs[0].dtype != dtype or self.freqs[0].device != device:
+        self.freqs = (
+            self.freqs[0].to(dtype=dtype, device=device),
+            self.freqs[-1].to(dtype=dtype, device=device)
+        )
 
     if self.model_type != 'vace' and y is not None:
         x = [torch.cat([u, v], dim=0) for u, v in zip(x, y)]
@@ -129,11 +142,9 @@ def usp_dit_forward(
     ])
 
     # time embeddings
-    with amp.autocast(dtype=torch.float32):
-        e = self.time_embedding(
-            sinusoidal_embedding_1d(self.freq_dim, t).float())
-        e0 = self.time_projection(e).unflatten(1, (6, self.dim))
-        assert e.dtype == torch.float32 and e0.dtype == torch.float32
+    e = self.time_embedding(
+        sinusoidal_embedding_1d(self.freq_dim, t))
+    e0 = self.time_projection(e).unflatten(1, (6, self.dim))
 
     # context
     context_lens = None
@@ -177,7 +188,7 @@ def usp_dit_forward(
 
     # unpatchify
     x = self.unpatchify(x, grid_sizes)
-    return [u.float() for u in x]
+    return x
 
 
 def usp_attn_forward(self,
@@ -200,8 +211,12 @@ def usp_attn_forward(self,
         return q, k, v
 
     q, k, v = qkv_fn(x)
-    q = rope_apply(q, grid_sizes, freqs)
-    k = rope_apply(k, grid_sizes, freqs)
+    if torch_musa is None:
+        q = rope_apply(q, grid_sizes, freqs, get_sequence_parallel_world_size(), get_sequence_parallel_rank())
+        k = rope_apply(k, grid_sizes, freqs, get_sequence_parallel_world_size(), get_sequence_parallel_rank())
+    else:
+        q = rope_apply_pytorch(q, grid_sizes, freqs, get_sequence_parallel_world_size(), get_sequence_parallel_rank())
+        k = rope_apply_pytorch(k, grid_sizes, freqs, get_sequence_parallel_world_size(), get_sequence_parallel_rank())
 
     # TODO: We should use unpaded q,k,v for attention.
     # k_lens = seq_lens // get_sequence_parallel_world_size()
@@ -210,7 +225,7 @@ def usp_attn_forward(self,
     #     k = torch.cat([u[:l] for u, l in zip(k, k_lens)]).unsqueeze(0)
     #     v = torch.cat([u[:l] for u, l in zip(v, k_lens)]).unsqueeze(0)
 
-    x = xFuserLongContextAttention()(
+    x = xFuserLongContextAttention(attn_type=attn_type)(
         None,
         query=half(q),
         key=half(k),

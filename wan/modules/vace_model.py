@@ -4,6 +4,12 @@ import torch.cuda.amp as amp
 import torch.nn as nn
 from diffusers.configuration_utils import register_to_config
 
+try:
+    import torch_musa
+    import torch_musa.core.amp as amp
+except ModuleNotFoundError:
+    torch_musa = None
+
 from .model import WanAttentionBlock, WanModel, sinusoidal_embedding_1d
 
 
