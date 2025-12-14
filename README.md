@@ -36,6 +36,7 @@ In this repository, we present **Wan2.1**, a comprehensive and open suite of vid
 
 ## Community Works
 If your work has improved **Wan2.1** and you would like more people to see it, please inform us.
+- [Training-Free-WAN-Editing](https://github.com/KyujinHan/Awesome-Training-Free-WAN2.1-Editing), built on **Wan2.1-T2V-1.3B**, allows training-free video editing with image-based training-free methods, such as [FlowEdit](https://arxiv.org/abs/2412.08629) and [FlowAlign](https://arxiv.org/abs/2505.23145).
 - [Wan-Move](https://github.com/ali-vilab/Wan-Move), accepted to NeurIPS 2025, a framework that brings **Wan2.1-I2V-14B** to SOTA fine-grained, point-level motion control! Refer to [their project page](https://wan-move.github.io/) for more information.
 - [EchoShot](https://github.com/JoHnneyWang/EchoShot), a native multi-shot portrait video generation model based on **Wan2.1-T2V-1.3B**, allows generation of multiple video clips featuring the same character as well as highly flexible content controllability. Refer to [their project page](https://johnneywang.github.io/EchoShot-webpage/) for more information.
 - [AniCrafter](https://github.com/MyNiuuu/AniCrafter), a human-centric animation model based on **Wan2.1-14B-I2V**, controls the Video Diffusion Models with 3DGS Avatars to insert and animate anyone into any scene following given motion sequences. Refer to the [project page](https://myniuuu.github.io/AniCrafter) for more examples.
