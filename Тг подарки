@@ -1,0 +1,59 @@
+from manim import *
+
+class NFTPresentation(Scene):
+    def construct(self):
+        # 1. Анимация отправки NFT-подарка
+        phone = SVGMobject("smartphone")  # Загрузите SVG-изображение телефона
+        chat_bubble = Text("Отправляю NFT-подарок!", font_size=24)
+        nft_gift = ImageMobject("nft_gift.png")  # Загрузите изображение NFT-подарка
+
+        phone.scale(0.8)
+        chat_bubble.next_to(phone, UP)
+        nft_gift.scale(0.5).next_to(chat_bubble, UP)
+
+        self.play(DrawBorderThenFill(phone))
+        self.play(Write(chat_bubble))
+        self.play(FadeIn(nft_gift))
+        self.wait(2)
+
+        # 2. Примеры уникальных цифровых подарков
+        art = ImageMobject("art.png")  # Загрузите изображение арта
+        card = ImageMobject("card.png")  # Загрузите изображение коллекционной карточки
+        animation = ImageMobject("animation.gif")  # Загрузите GIF-анимацию
+
+        art.scale(0.5).to_edge(LEFT)
+        card.scale(0.5).next_to(art, RIGHT)
+        animation.scale(0.5).next_to(card, RIGHT)
+
+        self.play(FadeIn(art), FadeIn(card), FadeIn(animation))
+        self.wait(3)
+
+        # 3. Преимущества NFT-подарков
+        advantages = VGroup(
+            Text("Уникальность", font_size=24),
+            Text("Возможность перепродажи", font_size=24),
+            Text("Эмоциональная ценность", font_size=24)
+        ).arrange(DOWN, aligned_edge=LEFT)
+
+        advantages.next_to(phone, DOWN)
+        self.play(Write(advantages))
+        self.wait(3)
+
+        # 4. Призыв
+        call_to_action = Text("Дарите уникальное! NFT-подарки в Telegram — тренд будущего!", font_size=28)
+        call_to_action.to_edge(UP)
+        self.play(Write(call_to_action))
+        self.wait(2)
+
+        # 5. Логотип Telegram и хэштег
+        telegram_logo = ImageMobject("telegram_logo.png")  # Загрузите логотип Telegram
+        hashtag = Text("#https://t.me/TONNELNFT1", font_size=24)
+
+        telegram_logo.scale(0.5).to_edge(DOWN)
+        hashtag.next_to(telegram_logo, RIGHT)
+
+        self.play(FadeIn(telegram_logo), Write(hashtag))
+        self.wait(3)
+
+# Для запуска анимации используйте команду:
+# manim -pql script.py NFTPresentation
