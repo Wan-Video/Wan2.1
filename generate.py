@@ -156,6 +156,11 @@ def _parse_args():
         default=False,
         help="Whether to use FSDP for DiT.")
     parser.add_argument(
+        "--cpu_offload",
+        action="store_true",
+        default=False,
+        help="Whether to use CPU offload for FSDP on Wan model, only works with dit_fsdp.")
+    parser.add_argument(
         "--save_file",
         type=str,
         default=None,
@@ -421,6 +426,7 @@ def generate(args):
             rank=rank,
             t5_fsdp=args.t5_fsdp,
             dit_fsdp=args.dit_fsdp,
+            cpu_offload=args.cpu_offload,
             use_usp=(args.ulysses_size > 1 or args.ring_size > 1),
             t5_cpu=args.t5_cpu,
         )
