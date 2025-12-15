@@ -1,0 +1,10 @@
+{
+  "name": "@wan-pwa/db",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Database schema and migrations",
+  "scripts": {
+    "migrate": "echo 'Run migrations in Supabase dashboard'",
+    "seed": "echo 'Run seed data in Supabase dashboard'"
+  }
+}
