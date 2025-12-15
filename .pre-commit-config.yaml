@@ -1,0 +1,120 @@
+# Pre-commit hooks configuration for Wan2.1
+# Install: pip install pre-commit
+# Setup: pre-commit install
+# Run: pre-commit run --all-files
+
+repos:
+  # General file checks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: ^(.*\.md|.*\.txt)$
+      - id: end-of-file-fixer
+        exclude: ^(.*\.md|.*\.txt)$
+      - id: check-yaml
+      - id: check-json
+      - id: check-toml
+      - id: check-added-large-files
+        args: ['--maxkb=10000']  # 10MB max
+      - id: check-merge-conflict
+      - id: check-case-conflict
+      - id: detect-private-key
+      - id: mixed-line-ending
+        args: ['--fix=lf']
+
+  # Python code formatting with YAPF
+  - repo: https://github.com/google/yapf
+    rev: v0.40.2
+    hooks:
+      - id: yapf
+        name: yapf
+        args: ['--in-place']
+        additional_dependencies: ['toml']
+
+  # Python import sorting
+  - repo: https://github.com/PyCQA/isort
+    rev: 5.13.2
+    hooks:
+      - id: isort
+        name: isort
+        args: ['--profile', 'black', '--line-length', '100']
+
+  # Python code formatting with Black (alternative to YAPF)
+  - repo: https://github.com/psf/black
+    rev: 24.1.1
+    hooks:
+      - id: black
+        name: black
+        language_version: python3.10
+        args: ['--line-length', '100']
+
+  # Python linting
+  - repo: https://github.com/PyCQA/flake8
+    rev: 7.0.0
+    hooks:
+      - id: flake8
+        name: flake8
+        args: ['--max-line-length=120', '--ignore=E203,E266,E501,W503,F403,F401']
+        additional_dependencies: ['flake8-docstrings']
+
+  # Type checking with mypy
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.8.0
+    hooks:
+      - id: mypy
+        name: mypy
+        args: ['--config-file=mypy.ini', '--ignore-missing-imports']
+        additional_dependencies:
+          - types-PyYAML
+          - types-requests
+          - types-setuptools
+        exclude: ^(tests/|gradio/|examples/)
+
+  # Security checks
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.7.6
+    hooks:
+      - id: bandit
+        name: bandit
+        args: ['-r', 'wan/', '-ll', '-i']
+        exclude: ^tests/
+
+  # Docstring coverage
+  - repo: https://github.com/econchick/interrogate
+    rev: 1.5.0
+    hooks:
+      - id: interrogate
+        name: interrogate
+        args: ['-v', '--fail-under=50', 'wan/']
+        pass_filenames: false
+
+  # Python security
+  - repo: https://github.com/Lucas-C/pre-commit-hooks-safety
+    rev: v1.3.3
+    hooks:
+      - id: python-safety-dependencies-check
+        name: safety
+        files: requirements\.txt$
+
+  # Markdown linting
+  - repo: https://github.com/igorshubovych/markdownlint-cli
+    rev: v0.38.0
+    hooks:
+      - id: markdownlint
+        name: markdownlint
+        args: ['--fix']
+
+# Configuration for specific hooks
+exclude: |
+  (?x)^(
+      \.git/|
+      \.pytest_cache/|
+      __pycache__/|
+      .*\.egg-info/|
+      build/|
+      dist/|
+      \.venv/|
+      venv/|
+      node_modules/
+  )

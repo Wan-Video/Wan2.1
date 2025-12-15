@@ -1,0 +1,163 @@
+name: Bug Report
+description: File a bug report to help us improve
+title: "[Bug]: "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to fill out this bug report! Please provide as much detail as possible.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: A clear and concise description of the bug
+      placeholder: What went wrong?
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to Reproduce
+      description: Steps to reproduce the behavior
+      placeholder: |
+        1. Load model with '...'
+        2. Run inference with '...'
+        3. See error
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What you expected to happen
+      placeholder: What should have happened?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behavior
+      description: What actually happened
+      placeholder: What actually happened?
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Error Logs
+      description: Please copy and paste any relevant error messages or logs
+      render: shell
+
+  - type: dropdown
+    id: pipeline
+    attributes:
+      label: Pipeline
+      description: Which pipeline are you using?
+      options:
+        - Text-to-Video (T2V)
+        - Image-to-Video (I2V)
+        - First-Last-Frame-to-Video (FLF2V)
+        - VACE (Video Creation & Editing)
+        - Text-to-Image (T2I)
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Wan2.1 Version
+      description: What version of Wan2.1 are you using?
+      placeholder: "2.1.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: model-size
+    attributes:
+      label: Model Size
+      description: Which model size are you using?
+      options:
+        - 14B
+        - 1.3B
+        - Not applicable
+    validations:
+      required: true
+
+  - type: input
+    id: python-version
+    attributes:
+      label: Python Version
+      description: What version of Python are you using?
+      placeholder: "3.10.0"
+    validations:
+      required: true
+
+  - type: input
+    id: pytorch-version
+    attributes:
+      label: PyTorch Version
+      description: What version of PyTorch are you using?
+      placeholder: "2.4.0"
+    validations:
+      required: true
+
+  - type: input
+    id: cuda-version
+    attributes:
+      label: CUDA Version
+      description: What version of CUDA are you using? (or N/A for CPU)
+      placeholder: "11.8"
+
+  - type: dropdown
+    id: gpu
+    attributes:
+      label: GPU Type
+      description: What GPU are you using?
+      options:
+        - NVIDIA A100
+        - NVIDIA V100
+        - NVIDIA RTX 4090
+        - NVIDIA RTX 3090
+        - NVIDIA RTX 3080
+        - Other NVIDIA GPU
+        - AMD GPU
+        - CPU only
+        - Other
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment Details
+      description: Any additional environment details
+      placeholder: |
+        - OS: Ubuntu 22.04
+        - RAM: 64GB
+        - Number of GPUs: 2
+        - Other relevant details
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Add any other context about the problem here
+      placeholder: Screenshots, videos, or additional information
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      description: Please confirm the following
+      options:
+        - label: I have searched existing issues to ensure this is not a duplicate
+          required: true
+        - label: I have provided all required information
+          required: true
+        - label: I have included error logs (if applicable)
+          required: false
