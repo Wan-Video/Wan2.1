@@ -9,6 +9,10 @@ import torch.nn.functional as F
 
 from .tokenizers import HuggingfaceTokenizer
 
+from accelerate import init_empty_weights
+from accelerate.utils import set_module_tensor_to_device
+from safetensors.torch import load_file
+
 __all__ = [
     'T5Model',
     'T5Encoder',
@@ -442,7 +446,7 @@ def _t5(name,
         model = model_cls(**kwargs)
 
     # set device
-    model = model.to(dtype=dtype, device=device)
+    # model = model.to(dtype=dtype, device=device)
 
     # init tokenizer
     if return_tokenizer:
@@ -479,6 +483,7 @@ class T5EncoderModel:
         checkpoint_path=None,
         tokenizer_path=None,
         shard_fn=None,
+        quantization="disabled",
     ):
         self.text_len = text_len
         self.dtype = dtype
@@ -486,14 +491,31 @@ class T5EncoderModel:
         self.checkpoint_path = checkpoint_path
         self.tokenizer_path = tokenizer_path
 
-        # init model
-        model = umt5_xxl(
-            encoder_only=True,
-            return_tokenizer=False,
-            dtype=dtype,
-            device=device).eval().requires_grad_(False)
+        
         logging.info(f'loading {checkpoint_path}')
-        model.load_state_dict(torch.load(checkpoint_path, map_location='cpu'))
+        if quantization == "disabled":
+            # init model
+            model = umt5_xxl(
+                encoder_only=True,
+                return_tokenizer=False,
+                dtype=dtype,
+                device=device).eval().requires_grad_(False)
+            model.load_state_dict(torch.load(checkpoint_path, map_location='cpu'))
+        elif quantization == "fp8_e4m3fn":
+            with init_empty_weights():
+                model = umt5_xxl(
+                    encoder_only=True,
+                    return_tokenizer=False,
+                    dtype=dtype,
+                    device=device).eval().requires_grad_(False)
+            cast_dtype = torch.float8_e4m3fn
+            state_dict = load_file(checkpoint_path, device="cpu")
+            params_to_keep = {'norm', 'pos_embedding', 'token_embedding'}
+            for name, param in model.named_parameters():
+                dtype_to_use = dtype if any(keyword in name for keyword in params_to_keep) else cast_dtype
+                set_module_tensor_to_device(model, name, device=device, dtype=dtype_to_use, value=state_dict[name])
+            del state_dict
+
         self.model = model
         if shard_fn is not None:
             self.model = shard_fn(self.model, sync_module_states=False)

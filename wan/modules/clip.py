@@ -7,6 +7,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.transforms as T
+from safetensors.torch import load_file
 
 from .attention import flash_attention
 from .tokenizers import HuggingfaceTokenizer
@@ -515,8 +516,13 @@ class CLIPModel:
             device=device)
         self.model = self.model.eval().requires_grad_(False)
         logging.info(f'loading {checkpoint_path}')
-        self.model.load_state_dict(
-            torch.load(checkpoint_path, map_location='cpu'))
+        if checkpoint_path.endswith('.safetensors'):
+            state_dict = load_file(checkpoint_path, device='cpu')
+            self.model.load_state_dict(state_dict)
+        elif checkpoint_path.endswith('.pth'):
+            self.model.load_state_dict(torch.load(checkpoint_path, map_location='cpu'))
+        else:
+            raise ValueError(f'Unsupported checkpoint file format: {checkpoint_path}')
 
         # init tokenizer
         self.tokenizer = HuggingfaceTokenizer(

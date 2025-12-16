@@ -644,7 +644,7 @@ class WanVAE:
             z_dim=z_dim,
         ).eval().requires_grad_(False).to(device)
 
-    def encode(self, videos):
+    def encode(self, videos, device=None):
         """
         videos: A list of videos each with shape [C, T, H, W].
         """
@@ -654,7 +654,7 @@ class WanVAE:
                 for u in videos
             ]
 
-    def decode(self, zs):
+    def decode(self, zs, device=None):
         with amp.autocast(dtype=self.dtype):
             return [
                 self.model.decode(u.unsqueeze(0),
