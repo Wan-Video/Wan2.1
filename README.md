@@ -98,6 +98,11 @@ Install dependencies:
 pip install -r requirements.txt
 ```
 
+for windows:
+
+```sh
+pip install -r requirements-win.txt
+```
 
 #### Model Download
 

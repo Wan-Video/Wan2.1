@@ -1,0 +1,25 @@
+# PyTorch + TorchVision (CUDA 12.8 build for Windows)
+--extra-index-url https://download.pytorch.org/whl/cu128
+
+torch
+torchvision
+
+
+# Core dependencies
+opencv-python>=4.9.0.80
+diffusers>=0.31.0
+transformers>=4.49.0
+tokenizers>=0.20.3
+accelerate>=1.1.1
+tqdm
+imageio
+easydict
+ftfy
+dashscope
+imageio-ffmpeg
+gradio>=5.0.0
+numpy>=1.23.5,<2
+
+# Known issue:
+# flash_attn is not supported on Windows (fails to build).
+# Users can skip it or run the project in WSL/Linux if needed.
