@@ -1,0 +1,43 @@
+steps:
+- name: 'gcr.io/cloud-builders/docker'
+  args: [
+    'build',
+    '-t',
+    '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_IMAGE_NAME}:${COMMIT_SHA}',
+    '-t',
+    '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_IMAGE_NAME}:latest',
+    '.'
+  ]
+  id: 'Build Docker image'
+
+- name: 'gcr.io/cloud-builders/docker'
+  args: ['push', '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_IMAGE_NAME}:${COMMIT_SHA}']
+  id: 'Push image to Artifact Registry (tagged with commit SHA)'
+
+- name: 'gcr.io/cloud-builders/docker'
+  args: ['push', '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_IMAGE_NAME}:latest']
+  id: 'Push image to Artifact Registry (tagged as latest)'
+
+# Substitutions (users should replace these with their actual values or set them during build trigger)
+# _REGION: The region of your Artifact Registry repository (e.g., us-central1)
+# _REPOSITORY: The name of your Artifact Registry repository (e.g., my-app-repo)
+# _IMAGE_NAME: The name for your Docker image (e.g., wan-video-generator)
+
+# Default values for substitutions (can be overridden)
+substitutions:
+  _REGION: 'us-central1' # Replace with your Artifact Registry region
+  _REPOSITORY: 'my-app-images' # Replace with your Artifact Registry repository name
+  _IMAGE_NAME: 'wan-video-service' # Replace with your desired image name
+
+# Optional: specify image to be pushed to Artifact Registry
+# This allows the image to be displayed in the build summary in Google Cloud Console
+images:
+- '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_IMAGE_NAME}:${COMMIT_SHA}'
+- '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_IMAGE_NAME}:latest'
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  # Optional: Specify machine type for faster builds (e.g., for GPU builds if needed by Dockerfile)
+  # machineType: 'E2_HIGHCPU_8' # or 'N1_HIGHCPU_32'
+  # For GPU builds during the Docker build process (if Dockerfile uses GPU):
+  # machineType: 'N1_HIGHCPU_8_CLOUD_GPU_P100_1' # Example, check available types
