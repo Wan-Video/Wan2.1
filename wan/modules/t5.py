@@ -7,7 +7,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .tokenizers import HuggingfaceTokenizer
+try:
+    import torch_musa
+except ModuleNotFoundError:
+    torch_musa = None
+
+from wan.modules.tokenizers import HuggingfaceTokenizer
+from wan.utils.platform import get_device
 
 __all__ = [
     'T5Model',
@@ -59,10 +65,8 @@ class T5LayerNorm(nn.Module):
         self.weight = nn.Parameter(torch.ones(dim))
 
     def forward(self, x):
-        x = x * torch.rsqrt(x.float().pow(2).mean(dim=-1, keepdim=True) +
+        x = x * torch.rsqrt(x.pow(2).mean(dim=-1, keepdim=True) +
                             self.eps)
-        if self.weight.dtype in [torch.float16, torch.bfloat16]:
-            x = x.type_as(self.weight)
         return self.weight * x
 
 
@@ -110,7 +114,7 @@ class T5Attention(nn.Module):
 
         # compute attention (T5 does not use scaling)
         attn = torch.einsum('binc,bjnc->bnij', q, k) + attn_bias
-        attn = F.softmax(attn.float(), dim=-1).type_as(attn)
+        attn = F.softmax(attn, dim=-1)
         x = torch.einsum('bnij,bjnc->binc', attn, v)
 
         # output
@@ -255,7 +259,7 @@ class T5RelativeEmbedding(nn.Module):
 
         # embeddings for small and large positions
         max_exact = num_buckets // 2
-        rel_pos_large = max_exact + (torch.log(rel_pos.float() / max_exact) /
+        rel_pos_large = max_exact + (torch.log(rel_pos / max_exact) /
                                      math.log(self.max_dist / max_exact) *
                                      (num_buckets - max_exact)).long()
         rel_pos_large = torch.min(
@@ -475,7 +479,7 @@ class T5EncoderModel:
         self,
         text_len,
         dtype=torch.bfloat16,
-        device=torch.cuda.current_device(),
+        device=get_device(),
         checkpoint_path=None,
         tokenizer_path=None,
         shard_fn=None,

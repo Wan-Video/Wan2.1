@@ -8,11 +8,13 @@ import sys
 import time
 import traceback
 import types
+from time import perf_counter
 from contextlib import contextmanager
 from functools import partial
 
 import torch
 import torch.cuda.amp as amp
+from torch.cuda import empty_cache, synchronize
 import torch.distributed as dist
 import torch.multiprocessing as mp
 import torch.nn.functional as F
@@ -20,8 +22,17 @@ import torchvision.transforms.functional as TF
 from PIL import Image
 from tqdm import tqdm
 
-from .modules.vace_model import VaceWanModel
-from .text2video import (
+try:
+    import torch_musa
+    import torch_musa.core.amp as amp
+    from torch_musa.core.memory import empty_cache
+    from torch_musa.core.device import synchronize
+    torch.backends.mudnn.allow_tf32 = True
+except ModuleNotFoundError:
+    torch_musa = None
+
+from wan.modules.vace_model import VaceWanModel
+from wan.text2video import (
     FlowDPMSolverMultistepScheduler,
     FlowUniPCMultistepScheduler,
     T5EncoderModel,
@@ -31,7 +42,9 @@ from .text2video import (
     retrieve_timesteps,
     shard_model,
 )
-from .utils.vace_processor import VaceVideoProcessor
+from wan.utils.vace_processor import VaceVideoProcessor
+from wan.utils.platform import get_device, get_torch_distributed_backend
+from wan.utils.memory_format import convert_conv3d_weight_memory_format
 
 
 class WanVace(WanT2V):
@@ -46,6 +59,7 @@ class WanVace(WanT2V):
         dit_fsdp=False,
         use_usp=False,
         t5_cpu=False,
+        profiler=None,
     ):
         r"""
         Initializes the Wan text-to-video generation model components.
@@ -68,7 +82,7 @@ class WanVace(WanT2V):
             t5_cpu (`bool`, *optional*, defaults to False):
                 Whether to place T5 model on CPU. Only works without t5_fsdp.
         """
-        self.device = torch.device(f"cuda:{device_id}")
+        self.device = get_device(device_id)
         self.config = config
         self.rank = rank
         self.t5_cpu = t5_cpu
@@ -90,6 +104,7 @@ class WanVace(WanT2V):
         self.vae = WanVAE(
             vae_pth=os.path.join(checkpoint_dir, config.vae_checkpoint),
             device=self.device)
+        convert_conv3d_weight_memory_format(self.vae.model, memory_format=torch.channels_last_3d)
 
         logging.info(f"Creating VaceWanModel from {checkpoint_dir}")
         self.model = VaceWanModel.from_pretrained(checkpoint_dir)
@@ -117,7 +132,8 @@ class WanVace(WanT2V):
             self.sp_size = 1
 
         if dist.is_initialized():
-            dist.barrier()
+            # dist.barrier()
+            pass
         if dit_fsdp:
             self.model = shard_fn(self.model)
         else:
@@ -135,6 +151,8 @@ class WanVace(WanT2V):
             zero_start=True,
             seq_len=75600,
             keep_last=True)
+
+        self.profiler = profiler
 
     def vace_encode_frames(self, frames, ref_images, masks=None, vae=None):
         vae = self.vae if vae is None else vae
@@ -340,6 +358,11 @@ class WanVace(WanT2V):
                 - H: Frame height (from size)
                 - W: Frame width from size)
         """
+        start_time = 0.0
+        end_time = 0.0
+        if self.rank == 0:
+            start_time = perf_counter()
+
         # preprocess
         # F = frame_num
         # target_shape = (self.vae.model.z_dim, (F - 1) // self.vae_stride[0] + 1,
@@ -390,6 +413,10 @@ class WanVace(WanT2V):
                             (self.patch_size[1] * self.patch_size[2]) *
                             target_shape[1] / self.sp_size) * self.sp_size
 
+        if self.rank == 0:
+            end_time = perf_counter()
+            logging.info(f"[preprocess] Elapsed time: {end_time - start_time:.2f} seconds")
+
         @contextmanager
         def noop_no_sync():
             yield
@@ -426,13 +453,19 @@ class WanVace(WanT2V):
             arg_c = {'context': context, 'seq_len': seq_len}
             arg_null = {'context': context_null, 'seq_len': seq_len}
 
+            if self.rank == 0:
+                start_time = perf_counter()
+
+            self.model.to(self.device)
             for _, t in enumerate(tqdm(timesteps)):
+                if self.profiler and self.rank == 0:
+                    self.profiler.step()
+
                 latent_model_input = latents
                 timestep = [t]
 
                 timestep = torch.stack(timestep)
 
-                self.model.to(self.device)
                 noise_pred_cond = self.model(
                     latent_model_input,
                     t=timestep,
@@ -457,20 +490,28 @@ class WanVace(WanT2V):
                     generator=seed_g)[0]
                 latents = [temp_x0.squeeze(0)]
 
+            if self.rank == 0:
+                end_time = perf_counter()
+                logging.info(f"[sampling time steps] Elapsed time: {end_time - start_time:.2f} seconds")
+
             x0 = latents
             if offload_model:
                 self.model.cpu()
-                torch.cuda.empty_cache()
+                empty_cache()
             if self.rank == 0:
+                start_time = perf_counter()
                 videos = self.decode_latent(x0, input_ref_images)
+                end_time = perf_counter()
+                logging.info(f"[VAE decoding] Elapsed time: {end_time - start_time:.2f} seconds")
 
         del noise, latents
         del sample_scheduler
         if offload_model:
             gc.collect()
-            torch.cuda.synchronize()
+            synchronize()
         if dist.is_initialized():
-            dist.barrier()
+            # dist.barrier()
+            pass
 
         return videos[0] if self.rank == 0 else None
 
@@ -568,7 +609,7 @@ class WanVaceMP(WanVace):
 
             torch.cuda.set_device(gpu)
             dist.init_process_group(
-                backend='nccl',
+                backend=get_torch_distributed_backend(),
                 init_method='env://',
                 rank=rank,
                 world_size=world_size)
@@ -629,11 +670,11 @@ class WanVaceMP(WanVace):
             else:
                 sp_size = 1
 
-            dist.barrier()
+            # dist.barrier()
             model = shard_fn(model)
             sample_neg_prompt = self.config.sample_neg_prompt
 
-            torch.cuda.empty_cache()
+            empty_cache()
             event = initialized_events[gpu]
             in_q = in_q_list[gpu]
             event.set()
@@ -748,7 +789,7 @@ class WanVaceMP(WanVace):
                             generator=seed_g)[0]
                         latents = [temp_x0.squeeze(0)]
 
-                    torch.cuda.empty_cache()
+                    empty_cache()
                     x0 = latents
                     if rank == 0:
                         videos = self.decode_latent(
@@ -758,9 +799,10 @@ class WanVaceMP(WanVace):
                 del sample_scheduler
                 if offload_model:
                     gc.collect()
-                    torch.cuda.synchronize()
+                    synchronize()
                 if dist.is_initialized():
-                    dist.barrier()
+                    # dist.barrier()
+                    pass
 
                 if rank == 0:
                     out_q.put(videos[0].cpu())
