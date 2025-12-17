@@ -14,3 +14,9 @@ imageio-ffmpeg
 flash_attn
 gradio>=5.0.0
 numpy>=1.23.5,<2
+diffusers
+ftfy
+transformers
+einops
+dashscope
+imageio-2.37.0
