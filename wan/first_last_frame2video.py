@@ -13,6 +13,7 @@ import numpy as np
 import torch
 import torch.cuda.amp as amp
 import torch.distributed as dist
+import torchvision
 import torchvision.transforms.functional as TF
 from tqdm import tqdm
 
@@ -211,7 +212,12 @@ class WanFLF2V:
                 round(last_frame_size[1] * last_frame_resize_ratio),
             ]
             # 2. center crop
-            last_frame = TF.center_crop(last_frame, last_frame_size)
+            transform = torchvision.transforms.Compose([
+                torchvision.transforms.Resize((last_frame_size[0], last_frame_size[1])),
+                torchvision.transforms.CenterCrop((first_frame_size[0], first_frame_size[1]))
+            ])
+
+            last_frame = transform(last_frame)
 
         max_seq_len = ((F - 1) // self.vae_stride[0] + 1) * lat_h * lat_w // (
             self.patch_size[1] * self.patch_size[2])
