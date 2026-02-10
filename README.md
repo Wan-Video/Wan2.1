@@ -36,6 +36,7 @@ In this repository, we present **Wan2.1**, a comprehensive and open suite of vid
 
 ## Community Works
 If your work has improved **Wan2.1** and you would like more people to see it, please inform us.
+- [Causal Forcing](https://github.com/thu-ml/Causal-Forcing), an AR-video framework based on **Wan2.1-T2V-1.3B**, whcih exposes a mathematical fallacy in Self Forcing and significantly outperforms it in both visual quality and motion dynamics, while maintaining the same training budget and inference efficiency. Refer to the [project page](https://thu-ml.github.io/CausalForcing.github.io) for more examples.
 - [Video-As-Prompt](https://github.com/bytedance/Video-As-Prompt), the first unified semantic-controlled video generation model based on **Wan2.1-14B-I2V** with a Mixture-of-Transformers architecture and in-context controls (e.g., concept, style, motion, camera). Refer to the [project page](https://bytedance.github.io/Video-As-Prompt/) for more examples.
 - [LightX2V](https://github.com/ModelTC/LightX2V), a lightweight and efficient video generation framework that integrates **Wan2.1** and **Wan2.2**, supports multiple engineering acceleration techniques for fast inference, which can run on RTX 5090 and RTX 4060 (8GB VRAM).
 - [DriVerse](https://github.com/shalfun/DriVerse), an autonomous driving world model based on **Wan2.1-14B-I2V**, generates future driving videos conditioned on any scene frame and given trajectory. Refer to the [project page](https://github.com/shalfun/DriVerse/tree/main) for more examples.
