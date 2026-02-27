@@ -170,6 +170,11 @@ To facilitate implementation, we will start with a basic version of the inferenc
 python generate.py  --task t2v-14B --size 1280*720 --ckpt_dir ./Wan2.1-T2V-14B --prompt "Two anthropomorphic cats in comfy boxing gear and bright gloves fight intensely on a spotlighted stage."
 ```
 
+You can also specify the output format using the `--output_format` argument. Supported formats are `mp4` (default) and `gif`. For example, to generate a GIF:
+```sh
+python generate.py  --task t2v-14B --size 1280*720 --ckpt_dir ./Wan2.1-T2V-14B --prompt "A dancing cat" --output_format gif
+```
+
 If you encounter OOM (Out-of-Memory) issues, you can use the `--offload_model True` and `--t5_cpu` options to reduce GPU memory usage. For example, on an RTX 4090 GPU:
 
 ``` sh
