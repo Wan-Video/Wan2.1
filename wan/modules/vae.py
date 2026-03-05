@@ -513,7 +513,7 @@ class WanVAE_(nn.Module):
         x_recon = self.decode(z)
         return x_recon, mu, log_var
 
-    def encode(self, x, scale):
+    def encode(self, x, scale=None):
         self.clear_cache()
         ## cache
         t = x.shape[2]
@@ -533,22 +533,24 @@ class WanVAE_(nn.Module):
                     feat_idx=self._enc_conv_idx)
                 out = torch.cat([out, out_], 2)
         mu, log_var = self.conv1(out).chunk(2, dim=1)
-        if isinstance(scale[0], torch.Tensor):
-            mu = (mu - scale[0].view(1, self.z_dim, 1, 1, 1)) * scale[1].view(
-                1, self.z_dim, 1, 1, 1)
-        else:
-            mu = (mu - scale[0]) * scale[1]
+        if scale is not None:
+            if isinstance(scale[0], torch.Tensor):
+                mu = (mu - scale[0].view(1, self.z_dim, 1, 1, 1)) * scale[1].view(
+                    1, self.z_dim, 1, 1, 1)
+            else:
+                mu = (mu - scale[0]) * scale[1]
         self.clear_cache()
-        return mu
+        return mu, log_var
 
-    def decode(self, z, scale):
+    def decode(self, z, scale=None):
         self.clear_cache()
         # z: [b,c,t,h,w]
-        if isinstance(scale[0], torch.Tensor):
-            z = z / scale[1].view(1, self.z_dim, 1, 1, 1) + scale[0].view(
-                1, self.z_dim, 1, 1, 1)
-        else:
-            z = z / scale[1] + scale[0]
+        if scale is not None:
+            if isinstance(scale[0], torch.Tensor):
+                z = z / scale[1].view(1, self.z_dim, 1, 1, 1) + scale[0].view(
+                    1, self.z_dim, 1, 1, 1)
+            else:
+                z = z / scale[1] + scale[0]
         iter_ = z.shape[2]
         x = self.conv2(z)
         for i in range(iter_):
@@ -650,7 +652,7 @@ class WanVAE:
         """
         with amp.autocast(dtype=self.dtype):
             return [
-                self.model.encode(u.unsqueeze(0), self.scale).float().squeeze(0)
+                self.model.encode(u.unsqueeze(0), self.scale)[0].float().squeeze(0)
                 for u in videos
             ]
 
