@@ -130,7 +130,8 @@ class WanSelfAttention(nn.Module):
     def forward(self, x, seq_lens, grid_sizes, freqs):
         r"""
         Args:
-            x(Tensor): Shape [B, L, num_heads, C / num_heads]
+            x (Tensor): Input token features of shape [B, L, C], `qkv_fn` then 
+                then reshapes to [B, L, num_heads, C / num_heads] before call to flash_attention
             seq_lens(Tensor): Shape [B]
             grid_sizes(Tensor): Shape [B, 3], the second dimension contains (F, H, W)
             freqs(Tensor): Rope freqs, shape [1024, C / num_heads / 2]
