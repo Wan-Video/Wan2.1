@@ -16,7 +16,7 @@ import torch.distributed as dist
 import torchvision.transforms.functional as TF
 from tqdm import tqdm
 
-from .distributed.fsdp import shard_model
+from .distributed.fsdp import shard_model, shard_model_with_cpu_offload
 from .modules.clip import CLIPModel
 from .modules.model import WanModel
 from .modules.t5 import T5EncoderModel
@@ -39,6 +39,7 @@ class WanI2V:
         rank=0,
         t5_fsdp=False,
         dit_fsdp=False,
+        cpu_offload=False,
         use_usp=False,
         t5_cpu=False,
         init_on_cpu=True,
@@ -59,6 +60,8 @@ class WanI2V:
                 Enable FSDP sharding for T5 model
             dit_fsdp (`bool`, *optional*, defaults to False):
                 Enable FSDP sharding for DiT model
+            cpu_offload (`bool`, *optional*, defaults to False):
+                Enable CPU offload for FSDP on Wan model, only works with dit_fsdp.
             use_usp (`bool`, *optional*, defaults to False):
                 Enable distribution strategy of USP.
             t5_cpu (`bool`, *optional*, defaults to False):
@@ -71,9 +74,13 @@ class WanI2V:
         self.rank = rank
         self.use_usp = use_usp
         self.t5_cpu = t5_cpu
+        self.dit_fsdp = dit_fsdp
+        self.cpu_offload = cpu_offload
 
         self.num_train_timesteps = config.num_train_timesteps
         self.param_dtype = config.param_dtype
+
+        assert not cpu_offload or (cpu_offload and dit_fsdp), "When cpu_offload is True, dit_fsdp must also be True"
 
         shard_fn = partial(shard_model, device_id=device_id)
         self.text_encoder = T5EncoderModel(
@@ -99,8 +106,14 @@ class WanI2V:
             tokenizer_path=os.path.join(checkpoint_dir, config.clip_tokenizer))
 
         logging.info(f"Creating WanModel from {checkpoint_dir}")
-        self.model = WanModel.from_pretrained(checkpoint_dir)
+        if cpu_offload:
+            # For FSDP and cpu_offload, force CPU initialization to avoid OOM
+            with torch.device('cpu'):
+                self.model = WanModel.from_pretrained(checkpoint_dir)
+        else:
+            self.model = WanModel.from_pretrained(checkpoint_dir)
         self.model.eval().requires_grad_(False)
+
 
         if t5_fsdp or dit_fsdp or use_usp:
             init_on_cpu = False
@@ -123,7 +136,11 @@ class WanI2V:
         if dist.is_initialized():
             dist.barrier()
         if dit_fsdp:
-            self.model = shard_fn(self.model)
+            if cpu_offload:
+                torch.cuda.empty_cache()
+                self.model = shard_model_with_cpu_offload(self.model, device_id=device_id)
+            else:
+                self.model = shard_fn(self.model)
         else:
             if not init_on_cpu:
                 self.model.to(self.device)
@@ -298,7 +315,10 @@ class WanI2V:
             if offload_model:
                 torch.cuda.empty_cache()
 
-            self.model.to(self.device)
+            if self.cpu_offload:
+                self.model.cpu()
+            else:
+                self.model.to(self.device)
             for _, t in enumerate(tqdm(timesteps)):
                 latent_model_input = [latent.to(self.device)]
                 timestep = [t]
