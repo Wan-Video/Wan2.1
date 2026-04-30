@@ -18,7 +18,7 @@ from tqdm import tqdm
 
 from .distributed.fsdp import shard_model
 from .modules.clip import CLIPModel
-from .modules.model import WanModel
+from .modules.model import WanModel, assign_litelinear_module_keys
 from .modules.t5 import T5EncoderModel
 from .modules.vae import WanVAE
 from .utils.fm_solvers import (
@@ -100,7 +100,8 @@ class WanI2V:
 
         logging.info(f"Creating WanModel from {checkpoint_dir}")
         self.model = WanModel.from_pretrained(checkpoint_dir)
-        self.model.eval().requires_grad_(False)
+        assign_litelinear_module_keys(self.model)
+        self.model.requires_grad_(False)
 
         if t5_fsdp or dit_fsdp or use_usp:
             init_on_cpu = False
@@ -127,6 +128,7 @@ class WanI2V:
         else:
             if not init_on_cpu:
                 self.model.to(self.device)
+                self.model.eval()
 
         self.sample_neg_prompt = config.sample_neg_prompt
 
@@ -299,6 +301,7 @@ class WanI2V:
                 torch.cuda.empty_cache()
 
             self.model.to(self.device)
+            self.model.eval()
             for _, t in enumerate(tqdm(timesteps)):
                 latent_model_input = [latent.to(self.device)]
                 timestep = [t]

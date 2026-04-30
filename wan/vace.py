@@ -20,6 +20,7 @@ import torchvision.transforms.functional as TF
 from PIL import Image
 from tqdm import tqdm
 
+from .modules.model import assign_litelinear_module_keys
 from .modules.vace_model import VaceWanModel
 from .text2video import (
     FlowDPMSolverMultistepScheduler,
@@ -93,7 +94,8 @@ class WanVace(WanT2V):
 
         logging.info(f"Creating VaceWanModel from {checkpoint_dir}")
         self.model = VaceWanModel.from_pretrained(checkpoint_dir)
-        self.model.eval().requires_grad_(False)
+        assign_litelinear_module_keys(self.model)
+        self.model.requires_grad_(False)
 
         if use_usp:
             from xfuser.core.distributed import get_sequence_parallel_world_size
@@ -122,6 +124,7 @@ class WanVace(WanT2V):
             self.model = shard_fn(self.model)
         else:
             self.model.to(self.device)
+            self.model.eval()
 
         self.sample_neg_prompt = config.sample_neg_prompt
 
@@ -433,6 +436,7 @@ class WanVace(WanT2V):
                 timestep = torch.stack(timestep)
 
                 self.model.to(self.device)
+                self.model.eval()
                 noise_pred_cond = self.model(
                     latent_model_input,
                     t=timestep,
@@ -606,7 +610,8 @@ class WanVaceMP(WanVace):
                 device=gpu)
             logging.info(f"Creating VaceWanModel from {self.checkpoint_dir}")
             model = VaceWanModel.from_pretrained(self.checkpoint_dir)
-            model.eval().requires_grad_(False)
+            assign_litelinear_module_keys(model)
+            model.requires_grad_(False)
 
             if self.use_usp:
                 from xfuser.core.distributed import get_sequence_parallel_world_size
@@ -631,6 +636,7 @@ class WanVaceMP(WanVace):
 
             dist.barrier()
             model = shard_fn(model)
+            model.eval()
             sample_neg_prompt = self.config.sample_neg_prompt
 
             torch.cuda.empty_cache()

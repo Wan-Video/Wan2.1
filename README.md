@@ -99,6 +99,59 @@ Install dependencies:
 pip install -r requirements.txt
 ```
 
+#### Optional LiteLinear FFN integration
+
+This tree expects LiteLinear as an installed optional wheel. The pinned CUDA
+12.8 wheel used by the local I2V checks is:
+
+```sh
+pip install --force-reinstall --no-deps "https://raw.githubusercontent.com/moonmath-ai/LiteLinear/3f3f09bf2dd1775dbf43f4ffe5de4a3cff9a25c7/install/lite_linear-0.2.0%2Bcu128-cp310-cp310-linux_x86_64.whl"
+```
+
+The Wan integration patches the video FFNs and resolves LiteLinear-compatible
+checkpoint shards before `WanModel.from_pretrained()` loads them.
+
+- `run_i2v.sh` shows a working single-GPU image-to-video example.
+- `test_wan_i2v_wheel_matrix.sh` downloads and installs the pinned wheel before
+  running the LiteLinear enabled/disabled and cache-mode matrix.
+- `litelinear.config` is the default Wan FFN filter used by that runner.
+
+WorldJen average scores by prompt:
+
+| Prompt | Metric | Baseline | LiteLinear | Delta |
+| --- | --- | ---: | ---: | ---: |
+| `surf-cat` | subject consistency | 93.33% | 97.50% | +4.17 |
+| `surf-cat` | scene consistency | 96.67% | 98.75% | +2.08 |
+| `surf-cat` | motion smoothness | 75.00% | 98.75% | +23.75 |
+| `surf-cat` | temporal flickering | 86.67% | 98.75% | +12.08 |
+| `surf-cat` | physical mechanics | 84.17% | 96.25% | +12.08 |
+| `surf-cat` | object permanence | 94.17% | 98.75% | +4.58 |
+| `surf-cat` | human fidelity | 91.67% | 98.75% | +7.08 |
+| `surf-cat` | dynamic degree | 56.67% | 87.50% | +30.83 |
+| `surf-cat` | semantic adherence | 100.00% | 100.00% | +0.00 |
+| `surf-cat` | spatial relationship | 94.17% | 100.00% | +5.83 |
+| `surf-cat` | semantic drift | 100.00% | 100.00% | +0.00 |
+| `surf-cat` | total | 88.41% | 97.73% | +9.32 |
+| `angelic-clock` | subject consistency | 87.50% | 86.25% | -1.25 |
+| `angelic-clock` | scene consistency | 88.33% | 83.75% | -4.58 |
+| `angelic-clock` | motion smoothness | 86.67% | 67.50% | -19.17 |
+| `angelic-clock` | temporal flickering | 90.00% | 70.00% | -20.00 |
+| `angelic-clock` | physical mechanics | 85.83% | 65.00% | -20.83 |
+| `angelic-clock` | object permanence | 88.33% | 80.00% | -8.33 |
+| `angelic-clock` | human fidelity | 90.00% | 82.50% | -7.50 |
+| `angelic-clock` | dynamic degree | 7.50% | 26.25% | +18.75 |
+| `angelic-clock` | semantic adherence | 99.17% | 97.50% | -1.67 |
+| `angelic-clock` | spatial relationship | 91.67% | 85.00% | -6.67 |
+| `angelic-clock` | semantic drift | 97.50% | 92.50% | -5.00 |
+| `angelic-clock` | total | 82.95% | 76.02% | -6.93 |
+
+Example:
+```sh
+WAN_I2V_CKPT_DIR=/path/to/Wan2.1-I2V-14B-720P ./run_i2v.sh
+```
+
+The recommended LiteLinear path is strict/offline or online-patched checkpoint
+loading.
 
 #### Model Download
 

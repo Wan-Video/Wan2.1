@@ -1,5 +1,11 @@
 # Copyright 2024-2025 The Alibaba Wan Team Authors. All rights reserved.
+import hashlib
+import json
 import math
+import os
+import shutil
+import warnings
+from pathlib import Path
 
 import torch
 import torch.cuda.amp as amp
@@ -9,10 +15,247 @@ from diffusers.models.modeling_utils import ModelMixin
 
 from .attention import flash_attention
 
+try:
+    from lite_linear import LiteLinear
+except Exception as exc:  # pragma: no cover - optional dependency
+    LiteLinear = None
+    _LITELINEAR_IMPORT_ERROR = exc
+    _LITELINEAR_PATCH_HELPERS_ERROR = exc
+    _litelinear_default_cache_root = None
+    _litelinear_resolve_or_build_patched_checkpoint = None
+    _litelinear_resolve_strict_checkpoint_path = None
+    _litelinear_safe_open_for_patch_build = None
+else:
+    _LITELINEAR_IMPORT_ERROR = None
+    try:
+        from lite_linear.checkpoint_patch_core import (
+            default_cache_root as _litelinear_default_cache_root,
+            resolve_or_build_patched_checkpoint as _litelinear_resolve_or_build_patched_checkpoint,
+            resolve_strict_checkpoint_path as _litelinear_resolve_strict_checkpoint_path,
+        )
+        from lite_linear.patched_checkpoint import (
+            get_safe_open_for_patch_build as _litelinear_safe_open_for_patch_build,
+        )
+    except Exception as exc:  # pragma: no cover - optional dependency
+        _LITELINEAR_PATCH_HELPERS_ERROR = exc
+        _litelinear_default_cache_root = None
+        _litelinear_resolve_or_build_patched_checkpoint = None
+        _litelinear_resolve_strict_checkpoint_path = None
+        _litelinear_safe_open_for_patch_build = None
+    else:
+        _LITELINEAR_PATCH_HELPERS_ERROR = None
+
 __all__ = ['WanModel']
 
 T5_CONTEXT_TOKEN_NUMBER = 512
 FIRST_LAST_FRAME_CONTEXT_TOKEN_NUMBER = 257 * 2
+_BOOL_TRUE = {"1", "true", "yes", "y", "on"}
+
+
+def _env_true(name, default="0"):
+    return os.environ.get(name, default).strip().lower() in _BOOL_TRUE
+
+
+def _litelinear_disabled():
+    return _env_true("LITELINEAR_DISABLED", "0")
+
+
+def _litelinear_online_patch_enabled():
+    return (not _litelinear_disabled()) and _env_true("LITELINEAR_ONLINE_PATCH", "0")
+
+
+def _litelinear_strict_mode_enabled():
+    return (not _litelinear_disabled()) and (not _litelinear_online_patch_enabled())
+
+
+def _litelinear_patch_tag():
+    tag = os.environ.get("LITELINEAR_PATCH_TAG", "nocalib").strip().lower()
+    return "calib" if tag == "calib" else "nocalib"
+
+
+def _litelinear_patch_config_path():
+    raw = os.environ.get("LITELINEAR_PATCH_CONFIG", "").strip()
+    if not raw:
+        return None
+    return Path(raw).expanduser().resolve()
+
+
+def _sync_file_reference(src: Path, dst: Path):
+    src = src.resolve()
+    if dst.is_symlink():
+        try:
+            if dst.resolve() == src:
+                return
+        except FileNotFoundError:
+            pass
+        dst.unlink(missing_ok=True)
+    elif dst.exists():
+        if dst.resolve() == src:
+            return
+        dst.unlink()
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        os.symlink(src, dst)
+    except OSError:
+        shutil.copy2(src, dst)
+
+
+def _litelinear_cached_patched_dir_ready(
+        patched_dir: Path,
+        *,
+        index_name: str,
+        config_name: str,
+        original_weight_map: dict):
+    patched_index_path = patched_dir / index_name
+    patched_config_path = patched_dir / config_name
+    if not patched_index_path.is_file() or not patched_config_path.exists():
+        return False
+    try:
+        patched_data = json.loads(patched_index_path.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    patched_weight_map = patched_data.get("weight_map")
+    if not isinstance(patched_weight_map, dict) or not patched_weight_map:
+        return False
+    # If the cached index is identical to the original one, no shard remap was
+    # applied and the original checkpoint directory should still be used.
+    if patched_weight_map == original_weight_map:
+        return False
+    for shard_name in {str(name) for name in patched_weight_map.values()}:
+        if not (patched_dir / shard_name).is_file():
+            return False
+    return True
+
+
+def _resolve_litelinear_pretrained_dir(pretrained_model_name_or_path):
+    if LiteLinear is None or _LITELINEAR_PATCH_HELPERS_ERROR is not None:
+        return pretrained_model_name_or_path
+    if not (_litelinear_online_patch_enabled() or _litelinear_strict_mode_enabled()):
+        return pretrained_model_name_or_path
+
+    try:
+        checkpoint_dir = Path(pretrained_model_name_or_path).expanduser().resolve()
+    except Exception:
+        return pretrained_model_name_or_path
+
+    index_path = checkpoint_dir / "diffusion_pytorch_model.safetensors.index.json"
+    config_path = checkpoint_dir / "config.json"
+    if not checkpoint_dir.is_dir() or not index_path.is_file() or not config_path.is_file():
+        return pretrained_model_name_or_path
+
+    data = json.loads(index_path.read_text(encoding="utf-8"))
+    weight_map = data.get("weight_map")
+    if not isinstance(weight_map, dict) or not weight_map:
+        return pretrained_model_name_or_path
+
+    rank = int(getattr(LiteLinear, "DEFAULT_RANK", 64))
+    tag = _litelinear_patch_tag()
+    config_filter_path = _litelinear_patch_config_path()
+    config_filter_digest = "none"
+    if config_filter_path is not None:
+        if config_filter_path.is_file():
+            config_filter_digest = hashlib.sha1(
+                config_filter_path.read_bytes()).hexdigest()[:16]
+        else:
+            config_filter_digest = hashlib.sha1(
+                str(config_filter_path).encode()).hexdigest()[:16]
+    mode = "online" if _litelinear_online_patch_enabled() else "strict"
+    dir_key = hashlib.sha1(
+        f"{checkpoint_dir}|mode={mode}|rank={rank}|tag={tag}|cfg={config_filter_digest}".encode()
+    ).hexdigest()[:16]
+    cache_root = _litelinear_default_cache_root()
+    patched_dir = cache_root / "patched_model_dirs" / dir_key
+    patched_dir.mkdir(parents=True, exist_ok=True)
+    if _litelinear_cached_patched_dir_ready(
+            patched_dir,
+            index_name=index_path.name,
+            config_name=config_path.name,
+            original_weight_map=weight_map):
+        print(
+            f"[LiteLinear] WanModel will reuse cached patched shards from {patched_dir}",
+            flush=True,
+        )
+        return patched_dir
+
+    resolve_shard = (
+        _litelinear_resolve_or_build_patched_checkpoint
+        if _litelinear_online_patch_enabled()
+        else _litelinear_resolve_strict_checkpoint_path
+    )
+    safe_open_fn = _litelinear_safe_open_for_patch_build()
+    shard_name_map = {}
+    patched_weight_map = {}
+    patched_count = 0
+    for shard_name in sorted({str(name) for name in weight_map.values()}):
+        src_shard = checkpoint_dir / shard_name
+        resolved = resolve_shard(
+            src_shard,
+            rank=rank,
+            tag=tag,
+            cache_root=cache_root,
+            safe_open_fn=safe_open_fn,
+            log_prefix="[LiteLinear]",
+            patch_config_path=config_filter_path,
+            copy_original=_env_true("LITELINEAR_PATCH_COPY_ORIGINAL", "1"),
+            force_rebuild=_env_true("LITELINEAR_PATCH_FORCE_REBUILD", "0"),
+        ) if _litelinear_online_patch_enabled() else resolve_shard(
+            src_shard,
+            rank=rank,
+            tag=tag,
+            safe_open_fn=safe_open_fn,
+            cache_root=cache_root,
+            log_prefix="[LiteLinear]",
+            patch_config_path=config_filter_path,
+        )
+        shard_name_map[shard_name] = resolved.name
+        if resolved.name != shard_name:
+            patched_count += 1
+        _sync_file_reference(resolved, patched_dir / resolved.name)
+        with safe_open_fn(str(resolved), framework="pt", device="cpu") as shard_file:
+            for key in shard_file.keys():
+                patched_weight_map[str(key)] = resolved.name
+
+    patched_index = dict(data)
+    patched_index["weight_map"] = patched_weight_map
+    (patched_dir / index_path.name).write_text(
+        json.dumps(patched_index, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    _sync_file_reference(config_path, patched_dir / config_path.name)
+
+    if patched_count:
+        print(
+            f"[LiteLinear] WanModel will load patched shards from {patched_dir} "
+            f"({patched_count}/{len(shard_name_map)} shard files remapped)",
+            flush=True,
+        )
+        return patched_dir
+    return pretrained_model_name_or_path
+
+
+def _build_video_ffn_linear(in_features, out_features):
+    if LiteLinear is None:
+        warnings.warn(
+            "lite_linear could not be imported for Wan video FFNs; "
+            f"falling back to nn.Linear ({_LITELINEAR_IMPORT_ERROR}).",
+            RuntimeWarning)
+        return nn.Linear(in_features, out_features)
+    # Use LiteLinear's native controls:
+    # - LITELINEAR_DISABLED=1 to keep original linear weights active
+    # - LiteLinear.DEFAULT_RANK to change the default decomposition rank
+    return LiteLinear(in_features, out_features)
+
+
+def assign_litelinear_module_keys(module):
+    if LiteLinear is None:
+        return 0
+
+    assigned = 0
+    for name, submodule in module.named_modules():
+        if isinstance(submodule, LiteLinear):
+            submodule._lite_key = name
+            assigned += 1
+    return assigned
 
 
 def sinusoidal_embedding_1d(dim, position):
@@ -268,9 +511,13 @@ class WanAttentionBlock(nn.Module):
                                                                       qk_norm,
                                                                       eps)
         self.norm2 = WanLayerNorm(dim, eps)
+        # Keep LiteLinear restricted to the video FFN path only.
+        # No replace_activation_proj_ needed here because Wan uses explicit
+        # linear -> GELU -> linear, unlike wrapped activation-projection blocks.
         self.ffn = nn.Sequential(
-            nn.Linear(dim, ffn_dim), nn.GELU(approximate='tanh'),
-            nn.Linear(ffn_dim, dim))
+            _build_video_ffn_linear(dim, ffn_dim),
+            nn.GELU(approximate='tanh'),
+            _build_video_ffn_linear(ffn_dim, dim))
 
         # modulation
         self.modulation = nn.Parameter(torch.randn(1, 6, dim) / dim**0.5)
@@ -489,6 +736,26 @@ class WanModel(ModelMixin, ConfigMixin):
 
         # initialize weights
         self.init_weights()
+
+    @classmethod
+    def from_pretrained(cls, pretrained_model_name_or_path, *model_args, **kwargs):
+        resolved = _resolve_litelinear_pretrained_dir(pretrained_model_name_or_path)
+        patched = str(resolved) != str(pretrained_model_name_or_path)
+        if patched:
+            kwargs = dict(kwargs)
+            # Patched LiteLinear shards can now use the low-memory loader path;
+            # LiteLinear modules are finalized after load from the populated
+            # factor buffers.
+            kwargs.setdefault("low_cpu_mem_usage", True)
+        model = super().from_pretrained(resolved, *model_args, **kwargs)
+        if patched and LiteLinear is not None:
+            finalized = LiteLinear.finalize_after_fast_load(model)
+            if finalized:
+                print(
+                    f"[LiteLinear] Finalized {finalized} LiteLinear modules after fast load",
+                    flush=True,
+                )
+        return model
 
     def forward(
         self,

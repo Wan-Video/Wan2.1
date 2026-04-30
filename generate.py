@@ -1,5 +1,6 @@
 # Copyright 2024-2025 The Alibaba Wan Team Authors. All rights reserved.
 import argparse
+import copy
 import logging
 import os
 import sys
@@ -87,6 +88,11 @@ def _validate_args(args):
     # T2I frame_num check
     if "t2i" in args.task:
         assert args.frame_num == 1, f"Unsupport frame_num {args.frame_num} for task {args.task}"
+    elif args.frame_num % 4 != 1:
+        raise ValueError(
+            f"Unsupported frame_num {args.frame_num} for task {args.task}. "
+            "Video tasks require frame_num = 4n+1 (for example: 49, 81, 121)."
+        )
 
     args.base_seed = args.base_seed if args.base_seed >= 0 else random.randint(
         0, sys.maxsize)
@@ -243,6 +249,11 @@ def _parse_args():
         type=float,
         default=5.0,
         help="Classifier free guidance scale.")
+    parser.add_argument(
+        "--sample_fps",
+        type=int,
+        default=None,
+        help="Output video FPS override. Defaults to the task config value.")
 
     args = parser.parse_args()
 
@@ -318,7 +329,9 @@ def generate(args):
             raise NotImplementedError(
                 f"Unsupport prompt_extend_method: {args.prompt_extend_method}")
 
-    cfg = WAN_CONFIGS[args.task]
+    cfg = copy.deepcopy(WAN_CONFIGS[args.task])
+    if args.sample_fps is not None:
+        cfg.sample_fps = args.sample_fps
     if args.ulysses_size > 1:
         assert cfg.num_heads % args.ulysses_size == 0, f"`{cfg.num_heads=}` cannot be divided evenly by `{args.ulysses_size=}`."
 

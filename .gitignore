@@ -22,6 +22,7 @@
 *.pdf
 *.whl
 cache
+benchmarks/
 __pycache__/
 storage/
 samples/

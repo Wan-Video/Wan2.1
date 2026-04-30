@@ -15,7 +15,7 @@ import torch.distributed as dist
 from tqdm import tqdm
 
 from .distributed.fsdp import shard_model
-from .modules.model import WanModel
+from .modules.model import WanModel, assign_litelinear_module_keys
 from .modules.t5 import T5EncoderModel
 from .modules.vae import WanVAE
 from .utils.fm_solvers import (
@@ -85,7 +85,8 @@ class WanT2V:
 
         logging.info(f"Creating WanModel from {checkpoint_dir}")
         self.model = WanModel.from_pretrained(checkpoint_dir)
-        self.model.eval().requires_grad_(False)
+        assign_litelinear_module_keys(self.model)
+        self.model.requires_grad_(False)
 
         if use_usp:
             from xfuser.core.distributed import get_sequence_parallel_world_size
@@ -108,6 +109,7 @@ class WanT2V:
             self.model = shard_fn(self.model)
         else:
             self.model.to(self.device)
+            self.model.eval()
 
         self.sample_neg_prompt = config.sample_neg_prompt
 
@@ -237,6 +239,7 @@ class WanT2V:
                 timestep = torch.stack(timestep)
 
                 self.model.to(self.device)
+                self.model.eval()
                 noise_pred_cond = self.model(
                     latent_model_input, t=timestep, **arg_c)[0]
                 noise_pred_uncond = self.model(
