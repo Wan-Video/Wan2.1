@@ -267,7 +267,12 @@ def generate(args):
     rank = int(os.getenv("RANK", 0))
     world_size = int(os.getenv("WORLD_SIZE", 1))
     local_rank = int(os.getenv("LOCAL_RANK", 0))
-    device = local_rank
+    # CPU fallback: if no CUDA device is present, run on CPU.
+    # On GPU systems the original behaviour (device = local_rank int) is preserved.
+    if torch.cuda.is_available():
+        device = local_rank
+    else:
+        device = "cpu"
     _init_logging(rank)
 
     if args.offload_model is None:
@@ -370,6 +375,15 @@ def generate(args):
 
         logging.info(
             f"Generating {'image' if 't2i' in args.task else 'video'} ...")
+
+        # CPU fallback: PyTorch on CPU does not support float16/bfloat16
+        # convolutions, so cast the DiT and text encoder to float32.
+        # On GPU this block is skipped and bfloat16 inference is preserved.
+        if device == "cpu":
+            wan_t2v.model.to(torch.float32)
+            if hasattr(wan_t2v, "text_encoder") and hasattr(wan_t2v.text_encoder, "model"):
+                wan_t2v.text_encoder.model.to(torch.float32)
+
         video = wan_t2v.generate(
             args.prompt,
             size=SIZE_CONFIGS[args.size],
@@ -426,6 +440,16 @@ def generate(args):
         )
 
         logging.info("Generating video ...")
+
+        # CPU fallback: cast the DiT, text encoder and CLIP image encoder
+        # to float32 before generation. Skipped on GPU.
+        if device == "cpu":
+            wan_i2v.model.to(torch.float32)
+            if hasattr(wan_i2v, "text_encoder") and hasattr(wan_i2v.text_encoder, "model"):
+                wan_i2v.text_encoder.model.to(torch.float32)
+            if hasattr(wan_i2v, "clip") and hasattr(wan_i2v.clip, "model"):
+                wan_i2v.clip.model.to(torch.float32)
+
         video = wan_i2v.generate(
             args.prompt,
             img,
@@ -484,6 +508,16 @@ def generate(args):
         )
 
         logging.info("Generating video ...")
+
+        # CPU fallback: cast the DiT, text encoder and CLIP image encoder
+        # to float32 before generation. Skipped on GPU.
+        if device == "cpu":
+            wan_flf2v.model.to(torch.float32)
+            if hasattr(wan_flf2v, "text_encoder") and hasattr(wan_flf2v.text_encoder, "model"):
+                wan_flf2v.text_encoder.model.to(torch.float32)
+            if hasattr(wan_flf2v, "clip") and hasattr(wan_flf2v.clip, "model"):
+                wan_flf2v.clip.model.to(torch.float32)
+
         video = wan_flf2v.generate(
             args.prompt,
             first_frame,
@@ -572,6 +606,20 @@ def generate(args):
                 value_range=(-1, 1))
         else:
             logging.info(f"Saving generated video to {args.save_file}")
+
+            # Also save each frame as a lossless PNG alongside the video.
+            # Useful on CPU (where ffmpeg encoding is slow) and harmless on GPU.
+            frame_dir = args.save_file.split('.')[0] + "_frames"
+            os.makedirs(frame_dir, exist_ok=True)
+            # video shape: [C, F, H, W]
+            for i in range(video.shape[1]):
+                frame = video[:, i, :, :].cpu().clamp(-1, 1).add(1).div(2).mul(255).byte()
+                # [C, H, W] -> [H, W, C] for PIL.
+                frame_np = frame.permute(1, 2, 0).numpy()
+                Image.fromarray(frame_np).save(
+                    os.path.join(frame_dir, f"frame_{i:04d}.png"))
+            logging.info(f"Lossless frames saved to: {frame_dir}")
+
             cache_video(
                 tensor=video[None],
                 save_file=args.save_file,

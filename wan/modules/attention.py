@@ -49,6 +49,11 @@ def flash_attention(
     deterministic:  bool. If True, slightly slower and uses more memory.
     dtype:          torch.dtype. Apply when dtype of q/k/v is not float16/bfloat16.
     """
+    # CPU fallback: flash attention requires CUDA; redirect to the SDPA path.
+    if q.device.type != 'cuda':
+        return attention(q, k, v, q_lens, k_lens, dropout_p, softmax_scale,
+                         q_scale, causal, window_size, deterministic, q.dtype)
+
     half_dtypes = (torch.float16, torch.bfloat16)
     assert dtype in half_dtypes
     assert q.device.type == 'cuda' and q.size(-1) <= 256
@@ -145,7 +150,8 @@ def attention(
     dtype=torch.bfloat16,
     fa_version=None,
 ):
-    if FLASH_ATTN_2_AVAILABLE or FLASH_ATTN_3_AVAILABLE:
+    # Use flash attention only on CUDA. On CPU fall through to SDPA.
+    if (FLASH_ATTN_2_AVAILABLE or FLASH_ATTN_3_AVAILABLE) and q.device.type == 'cuda':
         return flash_attention(
             q=q,
             k=k,
@@ -168,12 +174,23 @@ def attention(
             )
         attn_mask = None
 
-        q = q.transpose(1, 2).to(dtype)
-        k = k.transpose(1, 2).to(dtype)
-        v = v.transpose(1, 2).to(dtype)
+        # On CPU, preserve the input dtype (bfloat16/float16 conv ops are
+        # unsupported on CPU; the caller is expected to use float32 there).
+        target_dtype = q.dtype
+        if q.device.type == 'cuda':
+            q = q.transpose(1, 2).to(dtype)
+            k = k.transpose(1, 2).to(dtype)
+            v = v.transpose(1, 2).to(dtype)
+        else:
+            q = q.transpose(1, 2)
+            k = k.transpose(1, 2)
+            v = v.transpose(1, 2)
+
+        if q_scale is not None:
+            q = q * q_scale
 
         out = torch.nn.functional.scaled_dot_product_attention(
             q, k, v, attn_mask=attn_mask, is_causal=causal, dropout_p=dropout_p)
 
         out = out.transpose(1, 2).contiguous()
-        return out
+        return out.to(target_dtype)

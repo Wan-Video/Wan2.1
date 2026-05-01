@@ -280,6 +280,9 @@ class VisionTransformer(nn.Module):
         b = x.size(0)
 
         # embeddings
+        # Cast input to the patch_embedding weight dtype.
+        # On GPU weights are float16; on CPU we force float32 (see CLIPModel).
+        x = x.to(self.patch_embedding.weight.dtype)
         x = self.patch_embedding(x).flatten(2).permute(0, 2, 1)
         if self.pool_type in ('token', 'token_fc'):
             x = torch.cat([self.cls_embedding.expand(b, -1, -1), x], dim=1)
@@ -501,6 +504,9 @@ def clip_xlm_roberta_vit_h_14(
 class CLIPModel:
 
     def __init__(self, dtype, device, checkpoint_path, tokenizer_path):
+        # CPU does not support float16 convolutions; force float32.
+        if (isinstance(device, torch.device) and device.type == 'cpu') or device == 'cpu':
+            dtype = torch.float32
         self.dtype = dtype
         self.device = device
         self.checkpoint_path = checkpoint_path
@@ -537,6 +543,11 @@ class CLIPModel:
         videos = self.transforms.transforms[-1](videos.mul_(0.5).add_(0.5))
 
         # forward
-        with torch.cuda.amp.autocast(dtype=self.dtype):
+        # Use device-agnostic autocast; torch.cuda.amp.autocast errors on CPU.
+        is_cuda = next(self.model.parameters()).is_cuda
+        with torch.amp.autocast(
+                device_type='cuda' if is_cuda else 'cpu',
+                dtype=self.dtype,
+                enabled=is_cuda):
             out = self.model.visual(videos, use_31_block=True)
             return out
