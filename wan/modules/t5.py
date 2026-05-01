@@ -475,11 +475,19 @@ class T5EncoderModel:
         self,
         text_len,
         dtype=torch.bfloat16,
-        device=torch.cuda.current_device(),
+        device=None,
         checkpoint_path=None,
         tokenizer_path=None,
         shard_fn=None,
     ):
+        # Resolve the default device at call time, not in the signature.
+        # The original `device=torch.cuda.current_device()` default crashes at
+        # import time on CPU-only systems.
+        if device is None:
+            if torch.cuda.is_available():
+                device = torch.cuda.current_device()
+            else:
+                device = "cpu"
         self.text_len = text_len
         self.dtype = dtype
         self.device = device

@@ -29,6 +29,17 @@ from .utils.fm_solvers import (
 from .utils.fm_solvers_unipc import FlowUniPCMultistepScheduler
 
 
+def _to_float32(obj):
+    """Recursively cast tensors in nested containers to float32 (CPU fallback)."""
+    if isinstance(obj, torch.Tensor):
+        return obj.to(torch.float32)
+    elif isinstance(obj, (list, tuple)):
+        return type(obj)(_to_float32(x) for x in obj)
+    elif isinstance(obj, dict):
+        return {k: _to_float32(v) for k, v in obj.items()}
+    return obj
+
+
 class WanFLF2V:
 
     def __init__(
@@ -66,7 +77,11 @@ class WanFLF2V:
             init_on_cpu (`bool`, *optional*, defaults to True):
                 Enable initializing Transformer Model on CPU. Only works without FSDP or USP.
         """
-        self.device = torch.device(f"cuda:{device_id}")
+        # Accept either an integer GPU rank or the string "cpu".
+        if isinstance(device_id, str) and device_id == "cpu":
+            self.device = torch.device("cpu")
+        else:
+            self.device = torch.device(f"cuda:{device_id}")
         self.config = config
         self.rank = rank
         self.use_usp = use_usp
@@ -228,7 +243,8 @@ class WanFLF2V:
             generator=seed_g,
             device=self.device)
 
-        msk = torch.ones(1, 81, lat_h, lat_w, device=self.device)
+        # Use the actual frame count F rather than the hardcoded value of 81.
+        msk = torch.ones(1, F, lat_h, lat_w, device=self.device)
         msk[:, 1:-1] = 0
         msk = torch.concat([
             torch.repeat_interleave(msk[:, 0:1], repeats=4, dim=1), msk[:, 1:]
@@ -256,6 +272,10 @@ class WanFLF2V:
         self.clip.model.to(self.device)
         clip_context = self.clip.visual(
             [first_frame[:, None, :, :], last_frame[:, None, :, :]])
+        # clip_context shape is [2, seq_len, dim] (one row per frame).
+        # The model forward expects [1, 2*seq_len, dim] to concatenate with
+        # the text context, so reshape here before the optional offload.
+        clip_context = clip_context.reshape(1, -1, clip_context.shape[-1])
         if offload_model:
             self.clip.model.cpu()
 
@@ -282,7 +302,22 @@ class WanFLF2V:
         no_sync = getattr(self.model, 'no_sync', noop_no_sync)
 
         # evaluation mode
-        with amp.autocast(dtype=self.param_dtype), torch.no_grad(), no_sync():
+        # On CPU, autocast over bfloat16/float16 is unsupported and the inputs
+        # must be cast to float32 explicitly. On CUDA the original autocast path
+        # is preserved verbatim.
+        _is_cuda = self.device.type == 'cuda'
+        if not _is_cuda:
+            self.model.to(torch.float32)
+            context      = [t.to(torch.float32) for t in context]
+            context_null = [t.to(torch.float32) for t in context_null]
+            clip_context = clip_context.to(torch.float32)
+            y            = y.to(torch.float32)
+            noise        = noise.to(torch.float32)
+
+        with torch.amp.autocast(
+                device_type='cuda' if _is_cuda else 'cpu',
+                dtype=self.param_dtype if _is_cuda else torch.float32,
+                enabled=_is_cuda), torch.no_grad(), no_sync():
 
             if sample_solver == 'unipc':
                 sample_scheduler = FlowUniPCMultistepScheduler(
@@ -322,7 +357,13 @@ class WanFLF2V:
                 'y': [y],
             }
 
-            if offload_model:
+            # Ensure every tensor in the model kwargs is float32 on CPU.
+            if not _is_cuda:
+                arg_c    = _to_float32(arg_c)
+                arg_null = _to_float32(arg_null)
+
+            # torch.cuda.empty_cache() is a no-op (and warns) on CPU.
+            if offload_model and _is_cuda:
                 torch.cuda.empty_cache()
 
             self.model.to(self.device)
@@ -335,12 +376,12 @@ class WanFLF2V:
                 noise_pred_cond = self.model(
                     latent_model_input, t=timestep, **arg_c)[0].to(
                         torch.device('cpu') if offload_model else self.device)
-                if offload_model:
+                if offload_model and _is_cuda:
                     torch.cuda.empty_cache()
                 noise_pred_uncond = self.model(
                     latent_model_input, t=timestep, **arg_null)[0].to(
                         torch.device('cpu') if offload_model else self.device)
-                if offload_model:
+                if offload_model and _is_cuda:
                     torch.cuda.empty_cache()
                 noise_pred = noise_pred_uncond + guide_scale * (
                     noise_pred_cond - noise_pred_uncond)
@@ -361,7 +402,8 @@ class WanFLF2V:
 
             if offload_model:
                 self.model.cpu()
-                torch.cuda.empty_cache()
+                if _is_cuda:
+                    torch.cuda.empty_cache()
 
             if self.rank == 0:
                 videos = self.vae.decode(x0)
@@ -370,7 +412,8 @@ class WanFLF2V:
         del sample_scheduler
         if offload_model:
             gc.collect()
-            torch.cuda.synchronize()
+            if _is_cuda:
+                torch.cuda.synchronize()
         if dist.is_initialized():
             dist.barrier()
 

@@ -11,6 +11,7 @@ easydict
 ftfy
 dashscope
 imageio-ffmpeg
-flash_attn
+# flash_attn is GPU-only; uncomment on CUDA systems if you want flash attention.
+#flash_attn
 gradio>=5.0.0
 numpy>=1.23.5,<2
