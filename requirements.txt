@@ -11,6 +11,5 @@ easydict
 ftfy
 dashscope
 imageio-ffmpeg
-flash_attn
 gradio>=5.0.0
 numpy>=1.23.5,<2

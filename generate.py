@@ -18,6 +18,10 @@ import wan
 from wan.configs import MAX_AREA_CONFIGS, SIZE_CONFIGS, SUPPORTED_SIZES, WAN_CONFIGS
 from wan.utils.prompt_extend import DashScopePromptExpander, QwenPromptExpander
 from wan.utils.utils import cache_image, cache_video, str2bool
+from pathlib import Path
+import time
+import csv
+import pandas as pd 
 
 
 EXAMPLE_PROMPT = {
@@ -243,6 +247,24 @@ def _parse_args():
         type=float,
         default=5.0,
         help="Classifier free guidance scale.")
+    parser.add_argument(
+        "--prompt_csv",
+        type=str,
+        default=None,
+        help="Path to VideoPhy-2 Prompts CSV for batch generation"
+    )
+    parser.add_argument(
+        "--video_dir",
+        type=str,
+        default="gen_videos",
+        help="Directory to save batch .mp4 files"
+    )
+    parser.add_argument(
+        "--eval_csv",
+        type=str,
+        default="eval_results_baseline.csv",
+        help="Output CSV path for VideoPhy-2"
+    )
 
     args = parser.parse_args()
 
@@ -331,55 +353,208 @@ def generate(args):
         args.base_seed = base_seed[0]
 
     if "t2v" in args.task or "t2i" in args.task:
-        if args.prompt is None:
-            args.prompt = EXAMPLE_PROMPT[args.task]["prompt"]
-        logging.info(f"Input prompt: {args.prompt}")
-        if args.use_prompt_extend:
-            logging.info("Extending prompt ...")
+        if args.prompt_csv is not None:
+            logging.info("Creating WanT2V pipeline.")
+            wan_t2v = wan.WanT2V(
+                config=cfg,
+                checkpoint_dir=args.ckpt_dir,
+                device_id=device,
+                rank=rank,
+                t5_fsdp=args.t5_fsdp,
+                dit_fsdp=args.dit_fsdp,
+                use_usp=(args.ulysses_size > 1 or args.ring_size > 1),
+                t5_cpu=args.t5_cpu,
+            )
+
+            def _fmt_duration(seconds: float) -> str:
+                hrs, rem = divmod(int(seconds), 3600)
+                mins, secs = divmod(rem, 60)
+                return f"{hrs}h {mins:02d}m {secs:02d}s" if hrs > 0 else f"{mins}m {secs:02d}s"
+
+            df = pd.read_csv(args.prompt_csv).head(30)
+            total_prompts = len(df)
+            video_dir = Path(args.video_dir).resolve()
+            eval_csv = Path(args.eval_csv).resolve()
+            video_dir.mkdir(parents=True, exist_ok=True)
+
+            completed = set()
+            if eval_csv.exists() and eval_csv.stat().st_size > 0:
+                completed = set(pd.read_csv(eval_csv)["videopath"].dropna().tolist())
+
+            already_done = sum(
+                1 for idx in range(total_prompts)
+                if (video_dir / f"{idx:04d}.mp4").resolve().exists()
+                and str((video_dir / f"{idx:04d}.mp4").resolve()) in completed
+            )
+            remaining_total = total_prompts - already_done
+
             if rank == 0:
-                prompt_output = prompt_expander(
-                    args.prompt,
-                    tar_lang=args.prompt_extend_target_lang,
-                    seed=args.base_seed)
-                if prompt_output.status == False:
-                    logging.info(
-                        f"Extending prompt failed: {prompt_output.message}")
-                    logging.info("Falling back to original prompt.")
-                    input_prompt = args.prompt
+                logging.info("=" * 70)
+                logging.info(f"[VideoPhy-2 Batch] Prompt CSV : {args.prompt_csv}")
+                logging.info(f"[VideoPhy-2 Batch] Output Dir : {video_dir}")
+                logging.info(f"[VideoPhy-2 Batch] Eval CSV   : {eval_csv}")
+                logging.info(
+                    f"[VideoPhy-2 Batch] Config     : size={args.size}, frames={args.frame_num}, "
+                    f"steps={args.sample_steps}, shift={args.sample_shift}, cfg={args.sample_guide_scale}"
+                )
+                logging.info(
+                    f"[VideoPhy-2 Batch] Progress   : {total_prompts} total | "
+                    f"{already_done} already completed | {remaining_total} remaining"
+                )
+                logging.info("=" * 70)
+
+            extra_cols = [c for c in df.columns if c not in ("videopath", "caption")]
+            fieldnames = ["videopath", "caption", "gen_time_sec"] + extra_cols
+            write_header = not eval_csv.exists() or eval_csv.stat().st_size == 0
+
+            session_times: list[float] = []
+            batch_start_time = time.perf_counter()
+
+            with eval_csv.open("a", newline="", encoding="utf-8") as f:
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                if write_header:
+                    writer.writeheader()
+                    f.flush()
+
+                for idx, row in df.iterrows():
+                    video_name = f"{idx:04d}.mp4"
+                    out_file = (video_dir / video_name).resolve()
+
+                    if out_file.exists() and str(out_file) in completed:
+                        continue
+
+                    # Defensive reset so TeaCache / EasyCache step counters start clean on every prompt
+                    if hasattr(wan_t2v.model, "cnt"):
+                        wan_t2v.model.cnt = 0
+                    if hasattr(wan_t2v.model.__class__, "cnt"):
+                        wan_t2v.model.__class__.cnt = 0
+
+                    current_seed = args.base_seed + idx
+                    short_caption = str(row["caption"]).replace("\n", " ")[:70]
+
+                    if rank == 0:
+                        logging.info(
+                            f"[{idx + 1}/{total_prompts}] Starting {video_name} "
+                            f"(seed={current_seed}) | Caption: \"{short_caption}...\""
+                        )
+
+                    if torch.cuda.is_available():
+                        torch.cuda.reset_peak_memory_stats()
+
+                    t0 = time.perf_counter()
+                    try:
+                        video = wan_t2v.generate(
+                            str(row["upsampled_caption"]),
+                            size=SIZE_CONFIGS[args.size],
+                            frame_num=args.frame_num,
+                            shift=args.sample_shift,
+                            sample_solver=args.sample_solver,
+                            sampling_steps=args.sample_steps,
+                            guide_scale=args.sample_guide_scale,
+                            seed=current_seed,
+                            offload_model=args.offload_model,
+                        )
+                    except Exception as exc:
+                        if rank == 0:
+                            logging.error(
+                                f"[{idx + 1}/{total_prompts}] FAILED on {video_name} "
+                                f"(seed={current_seed}): {exc}"
+                            )
+                        raise
+
+                    elapsed = round(time.perf_counter() - t0, 3)
+                    session_times.append(elapsed)
+
+                    vram_str = ""
+                    if torch.cuda.is_available():
+                        peak_gb = torch.cuda.max_memory_allocated() / (1024 ** 3)
+                        vram_str = f" | Peak VRAM: {peak_gb:.2f} GB"
+
+                    if rank == 0:
+                        cache_video(
+                            tensor=video[None],
+                            save_file=str(out_file),
+                            fps=cfg.sample_fps,
+                            normalize=True,
+                            value_range=(-1, 1),
+                        )
+                        record = {col: row[col] for col in extra_cols}
+                        record["videopath"] = str(out_file)
+                        record["caption"] = row["caption"]
+                        record["gen_time_sec"] = elapsed
+                        writer.writerow(record)
+                        f.flush()
+
+                        avg_sec = sum(session_times) / len(session_times)
+                        videos_left = remaining_total - len(session_times)
+                        eta_str = _fmt_duration(avg_sec * videos_left)
+
+                        logging.info(
+                            f"[{idx + 1}/{total_prompts}] Saved {video_name} in {elapsed:.2f}s | "
+                            f"Avg: {avg_sec:.2f}s/vid | ETA: {eta_str}{vram_str}"
+                        )
+
+            if rank == 0:
+                total_elapsed = time.perf_counter() - batch_start_time
+                avg_final = (sum(session_times) / len(session_times)) if session_times else 0.0
+                logging.info("=" * 70)
+                logging.info(
+                    f"[VideoPhy-2 Batch] Finished! Generated {len(session_times)} videos in "
+                    f"{_fmt_duration(total_elapsed)} (Avg: {avg_final:.2f}s/vid)"
+                )
+                logging.info(f"[VideoPhy-2 Batch] Saved manifest: {eval_csv}")
+                logging.info("=" * 70)
+                        
+        else:
+            if args.prompt is None:
+                args.prompt = EXAMPLE_PROMPT[args.task]["prompt"]
+            logging.info(f"Input prompt: {args.prompt}")
+            if args.use_prompt_extend:
+                logging.info("Extending prompt ...")
+                if rank == 0:
+                    prompt_output = prompt_expander(
+                        args.prompt,
+                        tar_lang=args.prompt_extend_target_lang,
+                        seed=args.base_seed)
+                    if prompt_output.status == False:
+                        logging.info(
+                            f"Extending prompt failed: {prompt_output.message}")
+                        logging.info("Falling back to original prompt.")
+                        input_prompt = args.prompt
+                    else:
+                        input_prompt = prompt_output.prompt
+                    input_prompt = [input_prompt]
                 else:
-                    input_prompt = prompt_output.prompt
-                input_prompt = [input_prompt]
-            else:
-                input_prompt = [None]
-            if dist.is_initialized():
-                dist.broadcast_object_list(input_prompt, src=0)
-            args.prompt = input_prompt[0]
-            logging.info(f"Extended prompt: {args.prompt}")
+                    input_prompt = [None]
+                if dist.is_initialized():
+                    dist.broadcast_object_list(input_prompt, src=0)
+                args.prompt = input_prompt[0]
+                logging.info(f"Extended prompt: {args.prompt}")
 
-        logging.info("Creating WanT2V pipeline.")
-        wan_t2v = wan.WanT2V(
-            config=cfg,
-            checkpoint_dir=args.ckpt_dir,
-            device_id=device,
-            rank=rank,
-            t5_fsdp=args.t5_fsdp,
-            dit_fsdp=args.dit_fsdp,
-            use_usp=(args.ulysses_size > 1 or args.ring_size > 1),
-            t5_cpu=args.t5_cpu,
-        )
+            logging.info("Creating WanT2V pipeline.")
+            wan_t2v = wan.WanT2V(
+                config=cfg,
+                checkpoint_dir=args.ckpt_dir,
+                device_id=device,
+                rank=rank,
+                t5_fsdp=args.t5_fsdp,
+                dit_fsdp=args.dit_fsdp,
+                use_usp=(args.ulysses_size > 1 or args.ring_size > 1),
+                t5_cpu=args.t5_cpu,
+            )
 
-        logging.info(
-            f"Generating {'image' if 't2i' in args.task else 'video'} ...")
-        video = wan_t2v.generate(
-            args.prompt,
-            size=SIZE_CONFIGS[args.size],
-            frame_num=args.frame_num,
-            shift=args.sample_shift,
-            sample_solver=args.sample_solver,
-            sampling_steps=args.sample_steps,
-            guide_scale=args.sample_guide_scale,
-            seed=args.base_seed,
-            offload_model=args.offload_model)
+            logging.info(
+                f"Generating {'image' if 't2i' in args.task else 'video'} ...")
+            video = wan_t2v.generate(
+                args.prompt,
+                size=SIZE_CONFIGS[args.size],
+                frame_num=args.frame_num,
+                shift=args.sample_shift,
+                sample_solver=args.sample_solver,
+                sampling_steps=args.sample_steps,
+                guide_scale=args.sample_guide_scale,
+                seed=args.base_seed,
+                offload_model=args.offload_model)
 
     elif "i2v" in args.task:
         if args.prompt is None:
