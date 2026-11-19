@@ -37,21 +37,20 @@ def cache_video(tensor,
     for _ in range(retry):
         try:
             # preprocess
-            tensor = tensor.clamp(min(value_range), max(value_range))
-            tensor = torch.stack([
+            frames = tensor.clamp(min(value_range), max(value_range))
+            frames = torch.stack([
                 torchvision.utils.make_grid(
                     u, nrow=nrow, normalize=normalize, value_range=value_range)
-                for u in tensor.unbind(2)
+                for u in frames.unbind(2)
             ],
                                  dim=1).permute(1, 2, 3, 0)
-            tensor = (tensor * 255).type(torch.uint8).cpu()
+            frames = (frames * 255).type(torch.uint8).cpu()
 
             # write video
-            writer = imageio.get_writer(
-                cache_file, fps=fps, codec='libx264', quality=8)
-            for frame in tensor.numpy():
-                writer.append_data(frame)
-            writer.close()
+            with imageio.get_writer(
+                    cache_file, fps=fps, codec='libx264', quality=8) as writer:
+                for frame in frames.numpy():
+                    writer.append_data(frame)
             return cache_file
         except Exception as e:
             error = e
